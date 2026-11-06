@@ -12,6 +12,7 @@ Agent Job Pipeline is a source-available personal workflow for your own job sear
 - Scheduled runs start. The dispatcher assigns a cron tick delivered seconds late to its five-minute slot; before, it required exact alignment and no scheduled work ever ran.
 - The generated configs bind Worker version metadata, which discovery accounting reads; without it every discovery run failed at its first step.
 - SETUP.md passes the Cloudflare API token through the macOS Keychain and verifies it before use, after two pasted tokens arrived truncated.
+- Hosted CI runs on GitHub's macOS 15 Arm64 image. GitHub retired every macOS 14 image on November 2, 2026, and the first push of this release was cancelled on arrival with "The configuration 'macos-14-arm64-us-default' is not supported".
 - Scheduled runs whose secrets are not added yet are skipped with a log of the missing names, so the minutes between `deploy` and adding secrets produce no failed runs.
 - `preview`, `activate` and `deploy` on an unprovisioned instance now stop with `RESOURCES_REQUIRED` instead of a generic failure.
 - Gmail tracking is turned on after authorization, so its credentials exist before its first run.
