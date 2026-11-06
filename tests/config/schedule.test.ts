@@ -39,9 +39,19 @@ describe("local calendar scheduling", () => {
     expect(dueWorkflows(new Date("2026-11-01T05:30:00Z"), schedule).find(slot => slot.workflow === "intake")).toEqual({ workflow: "intake", slotKey: "intake-2026-11-01-0530Z" });
     expect(dueWorkflows(new Date("2026-11-01T06:30:00Z"), schedule).find(slot => slot.workflow === "intake")).toEqual({ workflow: "intake", slotKey: "intake-2026-11-01-0630Z" });
   });
-  it("ignores off-grid tick deliveries and rejects invalid dates", () => {
-    expect(dueWorkflows(new Date("2026-11-01T05:31:00Z"), schedule)).toEqual([]);
-    expect(dueWorkflows(new Date("2026-11-01T05:30:01Z"), schedule)).toEqual([]);
+  // Cloudflare delivers scheduledTime seconds off the boundary; a live tick
+  // reported :40:25.735. Requiring exact alignment meant nothing ever ran.
+  it("assigns a tick delivered seconds late or early to its five-minute slot", () => {
+    const onTime = calendar("2026-11-01T05:30:00Z");
+    expect(onTime.map(slot => slot.workflow)).toEqual(["fixed", "discovery", "lifecycle", "radar"]);
+    for (const at of ["2026-11-01T05:30:25.735Z", "2026-11-01T05:30:01Z", "2026-11-01T05:31:00Z", "2026-11-01T05:29:58Z"]) {
+      expect(calendar(at)).toEqual(onTime);
+      expect(dueWorkflows(new Date(at), schedule).find(slot => slot.workflow === "intake")).toEqual({ workflow: "intake", slotKey: "intake-2026-11-01-0530Z" });
+    }
+  });
+  it("ignores a tick more than two minutes from any slot and rejects invalid dates", () => {
+    expect(dueWorkflows(new Date("2026-11-01T05:32:30Z"), schedule)).toEqual([]);
+    expect(dueWorkflows(new Date("2026-11-01T05:27:31Z"), schedule)).toEqual([]);
     expect(() => dueWorkflows(new Date("invalid"), schedule)).toThrow(/date/i);
   });
 });
