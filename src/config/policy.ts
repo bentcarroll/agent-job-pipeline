@@ -121,16 +121,17 @@ function fullBody(job: NormalizedJob): boolean {
     !coverage.coverageGaps.length && !/\[(?:middle of posting|snapshot text) omitted\]/i.test(job.description);
 }
 export function settled(verdict: Verdict, gaps: ScreeningGap[] = []): LegacyScreening {
-  return { state: gaps.length ? "needs_review" : verdict.match ? "match" : "no_match", verdict, gaps };
+  return { state: gaps.length || verdict.review ? "needs_review" : verdict.match ? "match" : "no_match", verdict, gaps };
 }
 
 /** Settle a legacy verdict against the approved policy. A model rejection is
  * recorded as given: the model read the posting, and asking again later
- * would not change what it says. A possible match is rejected only where the
- * posting itself proves an exclusion; anything the policy cannot confirm is
- * named as a gap, so the card says what to check instead of being withheld. */
+ * would not change what it says. A possible match, or the model's own
+ * needs_review, is rejected only where the posting itself proves an
+ * exclusion; anything the policy cannot confirm is named as a gap, so the
+ * card says what to check instead of being withheld. */
 export function enforcePolicyVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy, category?: CompanyCategory): LegacyScreening {
-  if (!verdict.match) return settled(verdict);
+  if (!verdict.match && !verdict.review) return settled(verdict);
   const reject = (rule: string, reason: string) => settled({ match: false, lane: null, hard_exclude: rule, reason });
   const description = job.description ?? "";
   const employment = postingEmployment(job, policy);
@@ -141,9 +142,13 @@ export function enforcePolicyVerdict(job: NormalizedJob, verdict: Verdict, polic
   if (active && policy.clearance === "exclude_active" && !ambiguous) return reject("2", "Active clearance at application is excluded by the approved policy.");
   if (below) return reject("3", "Disclosed comparable annual base pay is below the approved floor.");
   const gaps: ScreeningGap[] = [];
+  // The model's own doubt comes first; a review may leave the lane open.
+  if (verdict.review) gaps.push({ field: "eligibility", reason: verdict.reason });
   const lane = policy.functionLanes.find(item => item.id === verdict.lane);
-  if (!lane) gaps.push({ field: "function", reason: `Screening named lane ${verdict.lane}, which your profile does not define.` });
-  else if (!supportedLane(verdict.lane, policy, category)) gaps.push({ field: "company_category", reason: `Lane ${lane.id} is limited to ${lane.companyCategories.join(", ")} companies in your profile; this company's category is not verified.` });
+  if (!verdict.review || verdict.lane !== null) {
+    if (!lane) gaps.push({ field: "function", reason: `Screening named lane ${verdict.lane}, which your profile does not define.` });
+    else if (!supportedLane(verdict.lane, policy, category)) gaps.push({ field: "company_category", reason: `Lane ${lane.id} is limited to ${lane.companyCategories.join(", ")} companies in your profile; this company's category is not verified.` });
+  }
   if (employment === "unknown") gaps.push({ field: "employment", reason: `The employment arrangement is stated ambiguously; your profile allows ${policy.employmentTypes.join(", ")}.` });
   if (ambiguous) gaps.push({ field: "clearance", reason: `A security clearance is mentioned but its timing is unclear; your profile ${policy.clearance === "review" ? "asks to review" : "excludes"} an active clearance at application.` });
   else if (active && policy.clearance === "review") gaps.push({ field: "clearance", reason: "The posting requires an active security clearance at application; your profile asks to review such roles." });

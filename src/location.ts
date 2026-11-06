@@ -254,10 +254,11 @@ export function locationFactNamesPlaceOutside(fact: { sourceField: string; excer
 }
 
 /** A model rejection, location or otherwise, is recorded as given. A possible
- * match is rejected where the posting places the role outside the eligible
- * area, and becomes a review gap where the location cannot be settled. */
+ * match, or the model's own needs_review, is rejected where the posting
+ * places the role outside the eligible area, and gains a review gap where
+ * the location cannot be settled. */
 export function enforceLocationVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy): LegacyScreening {
-  if (!verdict.match) return settled(verdict);
+  if (!verdict.match && !verdict.review) return settled(verdict);
   const location = resolveLocationEligibility(job, policy);
   if (location.state === "eligible") return settled(verdict);
   if (location.state === "review") return settled(verdict, [{ field: "location", reason: location.reason }]);

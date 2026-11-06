@@ -13,9 +13,9 @@ export const LEGACY_SCREENING_VERSIONS = { promptVersion: "legacy-verdict-v1", m
  * ineligible needs no card. Gaps from both are kept for the card. */
 export function settleVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy, category?: CompanyCategory): LegacyScreening {
   const checked = enforcePolicyVerdict(job, verdict, policy, category);
-  if (!checked.verdict.match) return checked;
+  if (checked.state === "no_match") return checked;
   const located = enforceLocationVerdict(job, checked.verdict, policy);
-  if (!located.verdict.match) return located;
+  if (located.state === "no_match") return located;
   return settled(verdict, [...checked.gaps, ...located.gaps]);
 }
 
@@ -29,7 +29,8 @@ export async function legacyReviewResult(job: NormalizedJob, category: CompanyCa
   // the things the card asks the person to confirm.
   return { snapshot, decision: {
     state: "needs_review", lane: null, hardExclude: null,
-    reason: screening.verdict.reason,
+    // The model's own doubt is already the first gap; a possible match keeps its fit reason.
+    reason: screening.verdict.review ? "Screening could not settle eligibility from the posting; see what to confirm." : screening.verdict.reason,
     evidence: [], gaps: screening.gaps.map(gap => gap.reason), qualificationWarnings: [],
     criteriaVersion: config.criteriaVersion, ...LEGACY_SCREENING_VERSIONS,
   } };

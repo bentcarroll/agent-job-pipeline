@@ -10,7 +10,9 @@ export interface FilterEnv {
   AI: Ai;
   AI_GATEWAY_ID: string;
   SCREENING_MODE?: "legacy" | "evidence";
-  // Evidence screening only; legacy screening keeps the model default.
+  // Legacy screening: low unless the Worker says otherwise; "max" is the model default.
+  SCREENING_REASONING_EFFORT?: string;
+  // Evidence screening only; undefined keeps the model default.
   EVIDENCE_REASONING_EFFORT?: ReasoningEffort;
 }
 
@@ -21,6 +23,17 @@ export function assertReasoningEffort(value: unknown): asserts value is Reasonin
   if (value !== undefined && !["low", "high", "max"].includes(value as string)) {
     throw new Error(`Unsupported screening reasoning effort ${JSON.stringify(value)}`);
   }
+}
+
+// Measured on the live install at the model default: 75 to 174 seconds a
+// verdict, with the 4,000-token answer budget often spent on reasoning and no
+// tool call at the end. At low effort the same postings answered in 7 to 17
+// seconds with valid verdicts, at a fifth of the neurons. Workers AI treats
+// an omitted effort as max, so "max" is passed as undefined.
+export function legacyReasoningEffort(env: Pick<FilterEnv, "SCREENING_REASONING_EFFORT">): ReasoningEffort | undefined {
+  const configured = env.SCREENING_REASONING_EFFORT ?? "low";
+  assertReasoningEffort(configured);
+  return configured === "max" ? undefined : configured;
 }
 
 const GLM_MODEL = LEGACY_SCREENING_VERSIONS.model;
@@ -40,6 +53,7 @@ class ModelDeadlineExceeded extends Error {
 /** Legacy screening: one GLM verdict, settled against the approved policy.
  * The result is always recorded; only model and transport failures throw. */
 export async function filterJob(env: FilterEnv, job: NormalizedJob, companyCategory?: CompanyCategory, options: ModelOptions = {}): Promise<LegacyScreening> {
+  const reasoningEffort = "reasoningEffort" in options ? options.reasoningEffort : legacyReasoningEffort(env);
   const verdict = await sampleModelDecision(env, job.id, {
       messages: [
         { role: "system", content: buildCriteriaPrompt(env.runtime) },
@@ -59,7 +73,7 @@ export async function filterJob(env: FilterEnv, job: NormalizedJob, companyCateg
       ],
       tools: [VERDICT_TOOL],
       tool_choice: "auto",
-  }, parseVerdict, "record_verdict", options);
+  }, parseVerdict, "record_verdict", { ...options, reasoningEffort });
   const screening = settleVerdict(job, verdict, env.runtime.candidate.policy, companyCategory);
   if (options.timing === "workflow") console.log(JSON.stringify({ event: "screening_phase", jobId: job.id, phase: "policy_guard_settled", state: screening.state, gaps: screening.gaps.map(gap => gap.field) }));
   return screening;

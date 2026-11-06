@@ -8,11 +8,12 @@ export function displayVerdict(card: ManualCard): Verdict {
     match: true, lane: null, hard_exclude: null,
     reason: "Added by hand. Advisory screening was unavailable; qualifications need review.",
   };
+  // A possible match the policy could not confirm, or the model's own
+  // needs_review: the gaps say what to check. The model's doubt is the first gap.
+  if (card.gaps.length) return { match: true, lane: card.verdict.lane, hard_exclude: null,
+    reason: `Added by hand. ${card.verdict.review ? "" : `${card.verdict.reason} `}Needs review: ${card.gaps.join(" ")}` };
   if (!card.verdict.match) return { ...card.verdict,
     reason: `Added by hand. Advisory screening disagreed: ${card.verdict.reason}` };
-  // A possible match the policy could not confirm: the gaps say what to check.
-  if (card.gaps.length) return { ...card.verdict,
-    reason: `Added by hand. ${card.verdict.reason} Needs review: ${card.gaps.join(" ")}` };
   return { ...card.verdict, reason: `Added by hand. ${card.verdict.reason}` };
 }
 

@@ -2,8 +2,9 @@ import type { Verdict } from "../criteria";
 import type { CompanyCategory, NormalizedJob } from "../sources";
 
 export type ScreeningState = "match" | "no_match" | "needs_review" | "retry";
-/** One thing the approved policy could not confirm about a possible match, in words for the Slack card. */
-export type ScreeningGap = { field: EvidenceField; reason: string };
+/** One thing the approved policy could not confirm about a possible match, in
+ * words for the Slack card. "eligibility" is the model's own needs_review. */
+export type ScreeningGap = { field: EvidenceField | "eligibility"; reason: string };
 /** A settled legacy verdict. A rejection is recorded as the model gave it; a
  * possible match the policy cannot confirm keeps that verdict and becomes
  * needs_review with every gap named. Nothing here is retried. */

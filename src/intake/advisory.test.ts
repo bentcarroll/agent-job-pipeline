@@ -19,6 +19,12 @@ describe("manual intake advisory display", () => {
     expect(shown.reason).toMatch(/^Added by hand\. Operations fit\. Needs review: The employment arrangement is stated ambiguously/);
     expect(shown.reason).not.toMatch(/unavailable/);
   });
+  it("shows the model's own needs_review once, not as a disagreement", () => {
+    const hedge = { match: false, lane: "A" as const, hard_exclude: null, reason: "Eligibility unresolved.", review: true as const };
+    const shown = displayVerdict(card({ verdict: hedge, gaps: ["Eligibility unresolved."] }));
+    expect(shown.reason).toBe("Added by hand. Needs review: Eligibility unresolved.");
+    expect(shown.match).toBe(true);
+  });
   it("still says screening was unavailable only for a provider failure", () => {
     expect(displayVerdict(card({ advisoryError: "provider_error" })).reason).toMatch(/unavailable/);
     expect(displayVerdict(card({ verdict: fit })).reason).toBe("Added by hand. Operations fit.");

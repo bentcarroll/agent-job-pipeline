@@ -71,6 +71,58 @@ describe("synthetic model response regressions", () => {
   });
 });
 
+// Seen live: told that unresolved eligibility supports neither verdict but
+// given only two to choose from, the model hedged with a no-match that still
+// named the fitting lane, and the parser refused it twice per posting.
+describe("the model can say it cannot decide", () => {
+  const hedge = { verdict: "needs_review", lane: "A", hard_exclude: null, reason: "Eligibility unresolved." };
+  it("accepts a needs_review verdict that names the fitting lane", () => {
+    expect(parseVerdict(JSON.stringify(hedge))).toEqual({ match: false, lane: "A", hard_exclude: null, reason: "Eligibility unresolved.", review: true });
+    expect(parseVerdict(JSON.stringify({ ...hedge, lane: null }))).toMatchObject({ match: false, lane: null, review: true });
+  });
+  it("accepts the verdict enum for match and no_match without a review flag", () => {
+    expect(parseVerdict(JSON.stringify({ verdict: "match", lane: "A", hard_exclude: null, reason: "Operations fit." }))).toEqual(positive);
+    expect(parseVerdict(JSON.stringify({ verdict: "no_match", lane: null, hard_exclude: "3", reason: "Below the floor." }))).toEqual({ match: false, lane: null, hard_exclude: "3", reason: "Below the floor." });
+  });
+  it("reads the live hedge, a no-match that still names a lane, as the model declining to decide", () => {
+    expect(parseVerdict(JSON.stringify({ match: false, lane: "A", hard_exclude: null, reason: "Requires review rather than a confident verdict." })))
+      .toEqual({ match: false, lane: "A", hard_exclude: null, reason: "Requires review rather than a confident verdict.", review: true });
+  });
+  it.each([
+    JSON.stringify({ ...hedge, hard_exclude: "2" }),
+    JSON.stringify({ verdict: "match", lane: "A", hard_exclude: "3", reason: "Mixed." }),
+    JSON.stringify({ verdict: "maybe", lane: "A", hard_exclude: null, reason: "Unknown state." }),
+    JSON.stringify({ verdict: "match", match: true, lane: "A", hard_exclude: null, reason: "Both spellings." }),
+  ])("still rejects a contradictory or unknown verdict: %s", args => {
+    expect(() => parseVerdict(args)).toThrow();
+  });
+  it("tells the model about the third option", async () => {
+    const { buildCriteriaPrompt } = await import("./config/prompts");
+    expect(buildCriteriaPrompt(await loadRuntimeConfig(CHICAGO_OPERATIONS))).toMatch(/needs_review/);
+  });
+});
+
+// Seen live at the model's default (maximum) reasoning effort: 75 to 174
+// seconds a call, and the 4,000-token answer budget spent on reasoning with
+// no tool call at the end. At low effort the same postings answered in 7 to
+// 17 seconds with valid verdicts.
+describe("legacy screening reasoning effort", () => {
+  it("asks for low effort unless the Worker is told otherwise", async () => {
+    for (const [configured, expected] of [[undefined, "low"], ["high", "high"], ["low", "low"], ["max", undefined]] as const) {
+      const run = vi.fn(async () => response(JSON.stringify(positive)));
+      const configuredEnv = { ...(await env(run)), ...(configured === undefined ? {} : { SCREENING_REASONING_EFFORT: configured }) };
+      await filterJob(configuredEnv, completePosting());
+      expect((run.mock.calls[0] as unknown[])[1]).toMatchObject(expected === undefined ? {} : { reasoning_effort: expected });
+      if (expected === undefined) expect((run.mock.calls[0] as unknown[])[1]).not.toHaveProperty("reasoning_effort");
+    }
+  });
+  it("refuses an unsupported configured effort instead of silently using the default", async () => {
+    const run = vi.fn(async () => response(JSON.stringify(positive)));
+    await expect(filterJob({ ...(await env(run)), SCREENING_REASONING_EFFORT: "medium" } as FilterEnv, completePosting())).rejects.toThrow(/effort/);
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
 const filterJob: typeof rawFilterJob = (env,job,category="applied AI",options) => rawFilterJob(env,job,category,options);
 
 const createPostingSnapshot: typeof rawCreatePostingSnapshot = (job,category="applied AI") => rawCreatePostingSnapshot(job,category);

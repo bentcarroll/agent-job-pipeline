@@ -158,6 +158,17 @@ describe("legacy screening settles every model verdict instead of retrying it", 
     expect(await settle(job, noFit, policy, "applied AI")).toEqual({ state: "no_match", verdict: noFit, gaps: [] });
     expect(await settle(completePosting({ description: null }), noFit, policy, "applied AI")).toEqual({ state: "no_match", verdict: noFit, gaps: [] });
   });
+  it("turns the model's own needs_review into a review with its reason as the gap", async () => {
+    const hedge = { match: false, lane: "A" as const, hard_exclude: null, reason: "Eligibility unresolved.", review: true as const };
+    expect(await settle(completePosting(), hedge, policy, "applied AI")).toEqual({ state: "needs_review", verdict: hedge, gaps: [{ field: "eligibility", reason: "Eligibility unresolved." }] });
+    expect((await settle(completePosting(), hedge, policy)).gaps.map(gap => gap.field)).toEqual(["eligibility", "company_category"]);
+  });
+  it("lets a proven exclusion outrank the model's needs_review", async () => {
+    const hedge = { match: false, lane: "A" as const, hard_exclude: null, reason: "Eligibility unresolved.", review: true as const };
+    expect((await settle(completePosting({ employmentType: "contract" }), hedge, policy, "applied AI")).verdict).toMatchObject({ match: false, hard_exclude: "1" });
+    const outside = completePosting({ location: "Springfield, IL", locationMetadata: { workplaceType: "OnSite", secondaryLocations: [], coverageGaps: [], sourceFields: ["synthetic"] } });
+    expect(await settle(outside, hedge, policy, "applied AI")).toMatchObject({ state: "no_match", verdict: { hard_exclude: "4" }, gaps: [] });
+  });
   it("records a model hard exclusion the policy cannot verify as the model's no_match", async () => {
     const pay = { match: false, lane: null, hard_exclude: "3", reason: "Pay is below the floor." };
     expect(await settle(completePosting({ compensation: "Annual base salary USD 110,000 - USD 120,000" }), pay, policy, "applied AI")).toEqual({ state: "no_match", verdict: pay, gaps: [] });

@@ -93,6 +93,22 @@ it.each(["fixed", "unbounded"] as const)("%s worker records an unconfirmed possi
   expect(posts).toHaveLength(3);
 });
 
+it.each(["fixed", "unbounded"] as const)("%s worker records the model's own needs_review and posts it once with its reason", async kind => {
+  const job = completePosting({ id: "greenhouse:Example Automation:920", url: "https://job-boards.greenhouse.io/example-automation/jobs/920" });
+  const hedge = JSON.stringify({ verdict: "needs_review", lane: "A", hard_exclude: null, reason: "Remote permission for Illinois is not stated." });
+  const { posts, calls, run, prefix } = arrange(kind, [job], async () => ({ choices: [{ message: { tool_calls: [{ function: { name: "record_verdict", arguments: hedge } }] }, finish_reason: "tool_calls" }] }));
+  await run("hedge");
+  expect(calls).toEqual([920]);
+  expect(await db.prepare("SELECT match FROM jobs WHERE id=?").bind(prefix + "920").first()).toEqual({ match: null });
+  const row = await db.prepare("SELECT state, decision_json FROM job_evaluations WHERE job_id=?").bind(prefix + "920").first<{ state: string; decision_json: string }>();
+  expect(row!.state).toBe("needs_review");
+  expect(JSON.parse(row!.decision_json).gaps[0]).toBe("Remote permission for Illinois is not stated.");
+  expect(await db.prepare("SELECT status FROM screening_deliveries WHERE job_id=?").bind(prefix + "920").first()).toEqual({ status: "delivered" });
+  expect(await db.prepare("SELECT count(*) AS n FROM discovery_retries").first()).toEqual({ n: 0 });
+  const review = posts.find(post => cardText(post).includes("Needs review"));
+  expect(cardText(review!)).toMatch(/Remote permission for Illinois is not stated\./);
+});
+
 it.each(["fixed", "unbounded"] as const)("%s worker gives up on a posting after its third failed screening", async kind => {
   const job = completePosting({ id: "greenhouse:Example Automation:950", url: "https://job-boards.greenhouse.io/example-automation/jobs/950" });
   const { calls, run, prefix } = arrange(kind, [job], async () => { throw new Error("synthetic provider outage"); });
