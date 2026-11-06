@@ -109,6 +109,22 @@ it.each(["fixed", "unbounded"] as const)("%s worker records the model's own need
   expect(cardText(review!)).toMatch(/Remote permission for Illinois is not stated\./);
 });
 
+// Seen live: every review card was held "for location verification" and
+// never posted, because delivery demanded a verified eligible location and
+// complete posting text, the very things a review asks the person to settle.
+it.each(["fixed", "unbounded"] as const)("%s worker posts a review card even when the posting's location and text cannot be verified", async kind => {
+  const job = completePosting({ id: "greenhouse:Example Automation:930", url: "https://job-boards.greenhouse.io/example-automation/jobs/930", location: "USA, CA, Pleasanton / USA, CA, Santa Clara" });
+  job.contentProvenance!.description.truncated = true;
+  const hedge = JSON.stringify({ verdict: "needs_review", lane: "A", hard_exclude: null, reason: "The hybrid location reads as California; the configured commute is Chicago." });
+  const { posts, run, prefix } = arrange(kind, [job], async () => ({ choices: [{ message: { tool_calls: [{ function: { name: "record_verdict", arguments: hedge } }] }, finish_reason: "tool_calls" }] }));
+  await run("held");
+  expect(await db.prepare("SELECT status FROM screening_deliveries WHERE job_id=?").bind(prefix + "930").first()).toEqual({ status: "delivered" });
+  expect(await db.prepare("SELECT count(*) AS n FROM discovery_retries").first()).toEqual({ n: 0 });
+  const review = posts.find(post => cardText(post).includes("Needs review"));
+  expect(cardText(review!)).toMatch(/hybrid location reads as California/);
+  expect(posts.some(post => /held for location verification/.test(post.text ?? ""))).toBe(false);
+});
+
 it.each(["fixed", "unbounded"] as const)("%s worker gives up on a posting after its third failed screening", async kind => {
   const job = completePosting({ id: "greenhouse:Example Automation:950", url: "https://job-boards.greenhouse.io/example-automation/jobs/950" });
   const { calls, run, prefix } = arrange(kind, [job], async () => { throw new Error("synthetic provider outage"); });

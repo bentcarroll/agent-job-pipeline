@@ -34,8 +34,12 @@ function needsRefresh(source: NormalizedJob | undefined, jobId: string, policy: 
     resolveLocationEligibility(source, policy).state !== "eligible";
 }
 
+// A review card asks the person to settle what the rules could not, so it is
+// not held for a verified location or complete text; only a possible match is.
+const isReview = (item: PendingScreeningNotification) => item.decision?.state === "needs_review";
+
 export function isLocationNotificationReady(item: PendingScreeningNotification, policy: CandidatePolicy): boolean {
-  try { validateQueuedDecision(item); return completeContext(item.job) && resolveLocationEligibility(item.job, policy).state === "eligible"; }
+  try { validateQueuedDecision(item); return isReview(item) || completeContext(item.job) && resolveLocationEligibility(item.job, policy).state === "eligible"; }
   catch { return false; }
 }
 
@@ -117,6 +121,11 @@ export async function prepareLocationNotifications(
     let retained = currentJobs.get(item.job.id);
     if (!retained && item.evaluationId) retained = await step.do(`load-notification-source:${item.evaluationId}`,
       async () => screeningNotificationSource(db, item.job.id, item.evaluationId!)) ?? undefined;
+    if (isReview(item)) {
+      try { validateQueuedDecision(item); ready.push(retained ? { ...item, job: retained } : item); }
+      catch (error) { held.push({ jobId: item.job.id, intentId: notificationId, reason: `Review delivery held: ${error instanceof Error ? error.message : "invalid queued decision"}`.slice(0, 500) }); }
+      continue;
+    }
     // Resolve the shared board checkpoint outside the per-posting callback;
     // Workflow steps must not be nested. A cached board error is recorded for
     // each affected posting inside its own guarded verification step below.
