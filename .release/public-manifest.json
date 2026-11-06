@@ -104,6 +104,7 @@
     "src/filter.test.ts",
     "src/filter.ts",
     "src/index.ts",
+    "src/intake/advisory.test.ts",
     "src/intake/command.ts",
     "src/intake/delivery-store.ts",
     "src/intake/delivery.ts",

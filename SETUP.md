@@ -54,7 +54,9 @@ node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/d
 
 This step writes to the selected Cloudflare account. Confirm the account and get the person's go-ahead first.
 
-Create an API token in the Cloudflare dashboard (My Profile, API Tokens): start from the "Edit Cloudflare Workers" template and add the account permissions D1 Edit and AI Gateway Edit, limited to the selected account. The person makes the token available to the assistant without showing it: in the terminal that will start Claude Code or Codex, run `read -s CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN`, paste the token, press Return, then start the assistant from that terminal. Never paste the token into the chat or a command argument. Then:
+Create an API token in the Cloudflare dashboard (My Profile, API Tokens): start from the "Edit Cloudflare Workers" template and add the account permissions D1 Edit and AI Gateway Edit, limited to the selected account. Cloudflare shows the token once; copy it with the Copy button beside it, not the page address or the sample command.
+
+The person stores the token in the macOS Keychain without showing it. In a terminal (in the Claude desktop app, the assistant can open a Terminal tab with this command), run `security add-generic-password -a "$USER" -s ajp-cloudflare-token -w` and paste the token at the hidden prompt twice. Each provider command then reads it at run time, by starting the command line with `CLOUDFLARE_API_TOKEN="$(security find-generic-password -s ajp-cloudflare-token -w)"`, so the value never appears in the chat, a file or the command text. Check it before the first provider command: `curl -s https://api.cloudflare.com/client/v4/user/tokens/verify -H "Authorization: Bearer $(security find-generic-password -s ajp-cloudflare-token -w)"` should report an active token. Never paste the token into the chat. Then:
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts resources --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json --provider-writes approved
@@ -134,13 +136,13 @@ Add the secrets in the Cloudflare dashboard (Workers & Pages, the Worker, Settin
 | `SERPER_API_KEY` | | yes | serper.dev dashboard |
 | `TWITTERAPI_IO_KEY`, `ANTHROPIC_API_KEY` | | radar only | twitterapi.io and the Anthropic Console |
 
-Test it: in the channel, type `/job` followed by a real posting link. The app answers with its screening result. Scheduled discovery starts at the next discovery time.
+Test it: in the channel, type `/job` followed by a real posting link. The app answers at once that it saved the request, then posts the posting with its screening result in the channel, usually within three minutes; the model step is the slow part. Scheduled discovery starts at the next discovery time.
 
 ## 7. Add Gmail tracking (optional)
 
 Gmail tracking needs the deployed Worker, which serves the `/` and `/privacy` pages Google's consent screen points to. Review those pages at the unbounded Worker's address, set up your Google project and Desktop OAuth client, then follow [Gmail setup](docs/lifecycle-setup.md). Consent must name the selected Gmail account and read-only processing, with classification through Workers AI and no Gateway logging or caching.
 
-First authorize, so the credentials are in place before tracking starts. With the person's go-ahead and the Cloudflare token exported as in step 3:
+First authorize, so the credentials are in place before tracking starts. With the person's go-ahead, and the command line starting with the Keychain token as in step 3:
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/gmail-auth/auth.mjs --instance /absolute/private/workspace/instance.json --client /absolute/private/workspace/oauth-client.json --workspace /absolute/private/workspace

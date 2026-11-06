@@ -3,6 +3,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { filterJob, type FilterEnv } from "../filter";
 import type { Verdict } from "../criteria";
 import type { NormalizedJob } from "../sources";
+import { LocationEligibilityError } from "../location";
 import { parseJobUrl } from "../unbounded/discovery";
 import { resolvePostingUrl } from "../discovery/resolve";
 import { fetchResolvedPosting } from "../discovery/fetch";
@@ -154,10 +155,15 @@ async function runAdvisory(db: D1Database, params: WorkflowParams,
     try {
       const verdict = await deps.screen(job);
       await saveAdvisory(db, params.requestId, params.generation, verdict, null, deps.now(), deps.criteriaVersion);
-    } catch {
-      await saveAdvisory(db, params.requestId, params.generation, null, "provider_error", deps.now(), deps.criteriaVersion);
+    } catch (error) {
+      await saveAdvisory(db, params.requestId, params.generation, null, advisoryFailure(error), deps.now(), deps.criteriaVersion);
     }
   });
+}
+
+/** A location the approved policy can't settle is a review outcome, as in scheduled discovery, not a provider failure. */
+export function advisoryFailure(error: unknown): "location_review" | "provider_error" {
+  return error instanceof LocationEligibilityError ? "location_review" : "provider_error";
 }
 
 async function revalidateSavedSelection(db: D1Database, params: WorkflowParams,
