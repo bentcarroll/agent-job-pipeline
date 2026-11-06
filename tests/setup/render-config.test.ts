@@ -12,6 +12,16 @@ it('losslessly compresses a large approved source bank and verifies every hash a
 it('rejects uncompressible provider oversize and malformed data without echoing input', async () => { const c = structuredClone(CHICAGO_OPERATIONS); c.search.openWebPhrases = [Buffer.from(randomBytes(9000)).toString('hex')]; expect(() => encodeCandidateBinding(c)).toThrow('CANDIDATE_BINDING_TOO_LARGE'); await expect(configureEnv({ CANDIDATE_CONFIG: 'gzip:secret-invalid!', INSTANCE_CONFIG: JSON.stringify(instance) })).rejects.toThrow('INVALID_CANDIDATE_BINDING'); });
 it('operational projection uses instance modes while explicit lifecycle test/off can only restrict live writes', async () => { const enabled = { ...instance, lifecycle: { ...instance.lifecycle, enabled: true }, schedule: { ...instance.schedule, lifecycleLocalTime: '10:00' }, screeningMode: 'evidence', manualScreeningMode: 'evidence' }; const { bindings } = await renderConfig(enabled, CHICAGO_OPERATIONS, 'unbounded', '/tmp/synthetic.ts', 'operational'); const actual = await configureEnv({ ...bindings, SCREENING_MODE: 'legacy', MANUAL_SCREENING_MODE: 'legacy', SLACK_ALLOWED_USER_ID: '' }); expect(actual.LIFECYCLE_MODE).toBe('live'); expect(actual.SCREENING_MODE).toBe('evidence'); expect(actual.MANUAL_SCREENING_MODE).toBe('evidence'); expect((await configureEnv({ ...bindings, LIFECYCLE_MODE: 'test' })).LIFECYCLE_MODE).toBe('test'); expect((await configureEnv({ ...bindings, LIFECYCLE_MODE: 'off' })).LIFECYCLE_MODE).toBe('off'); });
 
+// Found in the live install: discovery accounting (on in both templates)
+// reads CF_VERSION_METADATA, and every scheduled run failed without it.
+it.each(['fixed', 'unbounded'] as const)('binds Worker version metadata for discovery accounting in every %s config', async kind => {
+  for (const mode of ['preview', 'operational'] as const) {
+    const { text } = await renderConfig(instance, CHICAGO_OPERATIONS, kind, '/tmp/synthetic.ts', mode);
+    expect(text).toMatch(/\[version_metadata\]\nbinding = "CF_VERSION_METADATA"/);
+    expect(text).toContain('DISCOVERY_ACCOUNTING_MODE = "on"');
+  }
+});
+
 it.each(['fixed', 'unbounded'] as const)('emits one UTC dispatcher tick only for operational %s config', async kind => {
   const operational = await renderConfig(instance, CHICAGO_OPERATIONS, kind, '/tmp/synthetic.ts', 'operational');
   expect(operational.text).toContain('crons = ["*/5 * * * *"]');
