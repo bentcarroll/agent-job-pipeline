@@ -115,8 +115,9 @@ export async function runComparison(env: FilterEnv, fixtures: PolicyFixture[], o
       const started = Date.now();
       try {
         if (variant === "legacy") {
-          const legacyVerdict = await filterJob(wrapped, fixture.job, fixture.companyCategory, options);
-          return { state: legacyVerdict.match ? "match" : "no_match", reason: legacyVerdict.reason, legacyVerdict, calls, latencyMs: Date.now() - started };
+          const legacy = await filterJob(wrapped, fixture.job, fixture.companyCategory, options);
+          const reason = legacy.state === "needs_review" ? legacy.gaps.map(gap => gap.reason).join(" ") : legacy.verdict.reason;
+          return { state: legacy.state, reason, legacyVerdict: legacy.verdict, calls, latencyMs: Date.now() - started };
         }
         const { snapshot, decision } = await evaluateJob(wrapped, fixture.job, fixture.companyCategory, options);
         return { state: decision.state, reason: decision.reason, snapshot, decision, calls, latencyMs: Date.now() - started };

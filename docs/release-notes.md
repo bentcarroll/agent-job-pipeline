@@ -4,7 +4,12 @@ Agent Job Pipeline is a source-available personal workflow for your own job sear
 
 ## Changes since v0.1.0-beta.2
 
-- Setup can now deploy. A new `deploy` stage deploys both Workers from the reviewed activation, records the public address Slack and Google need, and names a missing workers.dev subdomain instead of failing silently. It deploys only what activation recorded: an edited config, a changed instance or different release files stop with `ACTIVATION_STALE`. SETUP.md adds the Slack app manifest, the secrets each Worker needs and a first `/job` test. The stage is tested against a simulated Wrangler; it has not yet run against a live account.
+- Setup can now deploy. A new `deploy` stage deploys both Workers from the reviewed activation, records the public address Slack and Google need, and names a missing workers.dev subdomain instead of failing silently. It deploys only what activation recorded: an edited config, a changed instance or different release files stop with `ACTIVATION_STALE`. SETUP.md adds the Slack app manifest, the secrets each Worker needs and a first `/job` test. In November 2026 the stage ran a from-scratch install on a separate Cloudflare account and Slack workspace; the problems that install exposed are fixed below.
+- Screening records every verdict. Before, a possible match the approved policy could not confirm, and a rejection it could not verify, were refused and re-screened every six to forty-eight hours for ever, never reaching Slack; in the live install that was 17 of 36 postings. Now a rejection is recorded as the model gave it, and a possible match the policy cannot confirm is recorded as needs review and posted once with what to check: the work arrangement reads two ways, a clearance requirement is unclear, the location cannot be settled, or a lane asks for a company category the search cannot verify. `/job` cards carry the same notes. A posting whose arrangement is simply not stated is accepted as the model judged it.
+- A posting the model fails on gets three screening tries, six and twelve hours apart; after the third failure it rests for a year with its last error on record.
+- Scheduled runs start. The dispatcher assigns a cron tick delivered seconds late to its five-minute slot; before, it required exact alignment and no scheduled work ever ran.
+- The generated configs bind Worker version metadata, which discovery accounting reads; without it every discovery run failed at its first step.
+- SETUP.md passes the Cloudflare API token through the macOS Keychain and verifies it before use, after two pasted tokens arrived truncated.
 - Scheduled runs whose secrets are not added yet are skipped with a log of the missing names, so the minutes between `deploy` and adding secrets produce no failed runs.
 - `preview`, `activate` and `deploy` on an unprovisioned instance now stop with `RESOURCES_REQUIRED` instead of a generic failure.
 - Gmail tracking is turned on after authorization, so its credentials exist before its first run.
@@ -19,7 +24,7 @@ The workflow separates the approved candidate profile, private career workspace 
 
 The measured local platform is macOS arm64, Node 22 and Python 3.12, with macOS Arial document checks. Linux, Windows and other architectures are untested. Python dependency versions are pinned for the measured platform; wheel artifacts are not hash-locked. No fonts are distributed. [Installation results](installation-results.md) were measured on v0.1.0-beta.1.
 
-This beta does not claim a verified hosted installation. A from-scratch install on a new Cloudflare account and Slack workspace, live Gmail consent and recovery, and resource cleanup remain open checks. Beta publication requires passed local workflow checks, material and visual evidence, matching hosted CI and independent review. The beta is a GitHub prerelease, never the latest stable release.
+This beta does not claim a verified hosted installation. A from-scratch install on a separate Cloudflare account and Slack workspace has run through deploy, `/job` and scheduled discovery once; live Gmail consent and recovery, and resource cleanup remain open checks. Beta publication requires passed local workflow checks, material and visual evidence, matching hosted CI and independent review. The beta is a GitHub prerelease, never the latest stable release.
 
 ## Setup prompt
 

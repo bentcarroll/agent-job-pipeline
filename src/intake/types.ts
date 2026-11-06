@@ -32,8 +32,10 @@ export type JobClaimResult =
   | { kind: "joined"; jobId: string; ownerRequestId: string }
   | { kind: "known_application"; jobId: string; status: string | null; sourceJobId: string | null }
   | { kind: "held"; reason: "ambiguous_application_identity" | "alias_conflict" | "posting_changed" };
+// gaps: what the approved policy could not confirm about a possible match,
+// in words for the card. Empty for a settled verdict or a provider failure.
 export type ManualCard = { requestId: string; job: NormalizedJob;
-  verdict: Verdict | null; userId: string; selectedAt: string; advisoryError: string | null };
+  verdict: Verdict | null; userId: string; selectedAt: string; advisoryError: string | null; gaps: string[] };
 export type SlackReceipt = { channelId: string; messageTs: string };
 export type SendOutcome =
   | { kind: "accepted"; receipt: SlackReceipt }

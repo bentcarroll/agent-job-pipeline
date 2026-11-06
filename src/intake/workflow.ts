@@ -1,9 +1,8 @@
 import { admitRunConfig, isActiveCriteria } from "../config/run-context";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { filterJob, type FilterEnv } from "../filter";
-import type { Verdict } from "../criteria";
 import type { NormalizedJob } from "../sources";
-import { LocationEligibilityError } from "../location";
+import type { LegacyScreening } from "../screening/types";
 import { parseJobUrl } from "../unbounded/discovery";
 import { resolvePostingUrl } from "../discovery/resolve";
 import { fetchResolvedPosting } from "../discovery/fetch";
@@ -27,7 +26,7 @@ import type { SlackPostEnv } from "../slack";
 export type IntakeWorkflowDeps = {
   resolve(url: string): Promise<ResolutionResult>;
   fetch(posting: ResolvedPosting): Promise<PostingFetchResult>;
-  screen(job: NormalizedJob): Promise<Verdict>;
+  screen(job: NormalizedJob): Promise<LegacyScreening>;
   now(): string;
   criteriaVersion?: string;
 };
@@ -153,17 +152,14 @@ async function runAdvisory(db: D1Database, params: WorkflowParams,
     await setIntakeStage(db, params.requestId, params.generation,
       { state: "screening", stage: "screen", at: deps.now() });
     try {
-      const verdict = await deps.screen(job);
-      await saveAdvisory(db, params.requestId, params.generation, verdict, null, deps.now(), deps.criteriaVersion);
-    } catch (error) {
-      await saveAdvisory(db, params.requestId, params.generation, null, advisoryFailure(error), deps.now(), deps.criteriaVersion);
+      // Advisory only: the person already chose this posting. A possible match
+      // the policy cannot confirm keeps its verdict and names the gaps on the card.
+      const screening = await deps.screen(job);
+      await saveAdvisory(db, params.requestId, params.generation, screening.verdict, null, deps.now(), deps.criteriaVersion, screening.gaps.map(gap => gap.reason));
+    } catch {
+      await saveAdvisory(db, params.requestId, params.generation, null, "provider_error", deps.now(), deps.criteriaVersion);
     }
   });
-}
-
-/** A location the approved policy can't settle is a review outcome, as in scheduled discovery, not a provider failure. */
-export function advisoryFailure(error: unknown): "location_review" | "provider_error" {
-  return error instanceof LocationEligibilityError ? "location_review" : "provider_error";
 }
 
 async function revalidateSavedSelection(db: D1Database, params: WorkflowParams,

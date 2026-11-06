@@ -1,7 +1,7 @@
 import { baselineSources } from "../../src/discovery/baseline";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, loadSchema } from "./harness";
-import { getPendingNotifications, isLegacyNotificationPending } from "../../src/db";
+import { isLegacyNotificationPending } from "../../src/db";
 import { getPendingScreeningNotifications, isScreeningNotificationPending } from "../../src/screening/store";
 import { loadRuntimeConfig } from "../../src/config/candidate";
 import { BOSTON_ENGINEERING, CHICAGO_OPERATIONS, posting, decision } from "../fixtures/candidates";
@@ -30,7 +30,7 @@ describe("candidate provenance", () => {
   it("treats existing null provenance as stale in both list and actual send checks", async () => {
     await db.prepare(`INSERT INTO jobs (id,company,title,url,first_seen_at,last_seen_at,match)
       VALUES ('old','Synthetic','Operations','https://example.test/old','2026-01-01','2026-01-01',1)`).run();
-    expect(await getPendingNotifications(db, "fixed_board", 10)).toEqual([]);
+    expect(await getPendingScreeningNotifications(db, "fixed_board", 10)).toEqual([]);
     expect(await getPendingScreeningNotifications(db, "fixed_board", 10)).toEqual([]);
     expect(await isLegacyNotificationPending(db, "old", "fixed_boards")).toBe(false);
     expect(await isScreeningNotificationPending(db, "old", undefined, "fixed_boards")).toBe(false);
@@ -56,7 +56,7 @@ describe("immutable admission versus explicit current activation", () => {
     const pinned = await admitRunConfig(db, "run-A", a);
     expect(await activateCandidateConfig(db, instanceId, a, null)).toBe(1);
     await insertJobs(db, [row(pinned.criteriaVersion)]);
-    expect((await getPendingNotifications(db, "fixed_board", 10, null, instanceId)).map(item => item.job.id)).toEqual(["greenhouse:Example Automation:123"]);
+    expect((await getPendingScreeningNotifications(db, "fixed_board", 10, null, instanceId)).map(item => item.job.id)).toEqual(["greenhouse:Example Automation:123"]);
     const before = await db.prepare("SELECT * FROM candidate_run_configs WHERE run_id='run-A'").first();
     expect(await activateCandidateConfig(db, instanceId, b, 1)).toBe(2);
     const replay = await admitRunConfig(db, "run-A", b);
@@ -67,7 +67,7 @@ describe("immutable admission versus explicit current activation", () => {
     expect(isCurrentCriteria(replay.criteriaVersion, b)).toBe(false);
     expect(isCurrentCriteria(null as unknown as string, replay)).toBe(false);
     expect(await readActiveCandidateConfig(db, instanceId)).toMatchObject({ criteriaVersion: b.criteriaVersion, revision: 2 });
-    expect(await getPendingNotifications(db, "fixed_board", 10, null, instanceId)).toEqual([]);
+    expect(await getPendingScreeningNotifications(db, "fixed_board", 10, null, instanceId)).toEqual([]);
     expect(await isLegacyNotificationPending(db, row(a.criteriaVersion).job.id, "fixed_boards", instanceId)).toBe(false);
     expect(await getPendingScreeningNotifications(db, "fixed_board", 10, null, instanceId)).toEqual([]);
   });
@@ -103,7 +103,7 @@ describe("immutable admission versus explicit current activation", () => {
     await expect(activateCandidateConfig(db, instanceId, b, 0)).rejects.toThrow(/revision/);
     expect((await readActiveCandidateConfig(db, instanceId))?.revision).toBe(2);
     await insertJobs(db, [row(a.criteriaVersion)]);
-    expect(await getPendingNotifications(db, "fixed_board", 10, null, "another-instance")).toEqual([]);
+    expect(await getPendingScreeningNotifications(db, "fixed_board", 10, null, "another-instance")).toEqual([]);
   });
 
   it("retains immutable A evidence while an old replay cannot replace B projection or pending cards", async () => {
@@ -146,7 +146,7 @@ describe("immutable admission versus explicit current activation", () => {
     const evaluation = await createEvaluation({ jobId: id, runId: "new-policy", snapshot, decision: decision({ state: "no_match", criteriaVersion: b.criteriaVersion }) });
     await saveScreeningResult(db, row(b.criteriaVersion), evaluation, undefined, instanceId);
     expect(await db.prepare("SELECT application_status,application_status_source,application_status_updated_at,notified_at FROM jobs").first()).toEqual(before);
-    expect(await getPendingNotifications(db, "fixed_board", 10, null, instanceId)).toEqual([]);
+    expect(await getPendingScreeningNotifications(db, "fixed_board", 10, null, instanceId)).toEqual([]);
   });
 });
 
@@ -404,7 +404,7 @@ it.each([undefined, null, ""])("denies legacy actual-send checks without pinned 
   const { b } = await configs();
   await activateCandidateConfig(db, instanceId, b, null);
   await insertJobs(db, [row(b.criteriaVersion)]);
-  expect(await getPendingNotifications(db, "fixed_board", 10, null, instanceId)).toHaveLength(1);
+  expect(await getPendingScreeningNotifications(db, "fixed_board", 10, null, instanceId)).toHaveLength(1);
   expect(await isLegacyNotificationPending(db, posting().id, "fixed_boards", instanceId, missingVersion as any)).toBe(false);
 });
 

@@ -2,8 +2,8 @@ import type { CompanyCategory, NormalizedJob } from "./sources";
 import { VERDICT_TOOL, parseVerdict, type Verdict } from "./criteria";
 import { buildCriteriaPrompt } from "./config/prompts";
 import type { RuntimeConfig } from "./config/types";
-import { enforcePolicyVerdict } from "./config/policy";
-import { enforceLocationVerdict } from "./location";
+import { LEGACY_SCREENING_VERSIONS, legacyReviewResult, settleVerdict } from "./screening/legacy";
+import type { LegacyScreening, ScreeningResult } from "./screening/types";
 
 export interface FilterEnv {
   runtime: RuntimeConfig;
@@ -23,7 +23,7 @@ export function assertReasoningEffort(value: unknown): asserts value is Reasonin
   }
 }
 
-const GLM_MODEL = "@cf/zai-org/glm-5.3-flash";
+const GLM_MODEL = LEGACY_SCREENING_VERSIONS.model;
 export interface ModelOptions { timing?: "workflow"; reasoningEffort?: ReasoningEffort }
 const DEFAULT_TIMING = { gatewayMs: 90_000, attemptMs: 120_000, totalMs: 180_000 };
 // Opt in only where a durable Workflow owns the wait. HTTP background work
@@ -37,7 +37,9 @@ class ModelDeadlineExceeded extends Error {
   constructor() { super("model response deadline exceeded"); }
 }
 
-export async function filterJob(env: FilterEnv, job: NormalizedJob, companyCategory?: CompanyCategory, options: ModelOptions = {}): Promise<Verdict> {
+/** Legacy screening: one GLM verdict, settled against the approved policy.
+ * The result is always recorded; only model and transport failures throw. */
+export async function filterJob(env: FilterEnv, job: NormalizedJob, companyCategory?: CompanyCategory, options: ModelOptions = {}): Promise<LegacyScreening> {
   const verdict = await sampleModelDecision(env, job.id, {
       messages: [
         { role: "system", content: buildCriteriaPrompt(env.runtime) },
@@ -58,18 +60,18 @@ export async function filterJob(env: FilterEnv, job: NormalizedJob, companyCateg
       tools: [VERDICT_TOOL],
       tool_choice: "auto",
   }, parseVerdict, "record_verdict", options);
-  const trace = (phase: string) => {
-    if (options.timing === "workflow") console.log(JSON.stringify({ event: "screening_phase", jobId: job.id, phase }));
-  };
-  trace("location_guard_start");
-  try {
-    const checked = enforceLocationVerdict(job, enforcePolicyVerdict(job, verdict, env.runtime.candidate.policy, companyCategory), env.runtime.candidate.policy);
-    trace("location_guard_ok");
-    return checked;
-  } catch (error) {
-    trace("location_guard_error");
-    throw error;
-  }
+  const screening = settleVerdict(job, verdict, env.runtime.candidate.policy, companyCategory);
+  if (options.timing === "workflow") console.log(JSON.stringify({ event: "screening_phase", jobId: job.id, phase: "policy_guard_settled", state: screening.state, gaps: screening.gaps.map(gap => gap.field) }));
+  return screening;
+}
+
+/** What a discovery loop stores for a legacy screening: a plain verdict row,
+ * or, for a possible match the policy could not confirm, a needs_review
+ * evaluation that is delivered once with its gaps. */
+export async function screenLegacyJob(env: FilterEnv, job: NormalizedJob, companyCategory?: CompanyCategory, options: ModelOptions = {}): Promise<{ verdict: Verdict; screening?: undefined } | { verdict?: undefined; screening: ScreeningResult }> {
+  const screening = await filterJob(env, job, companyCategory, options);
+  if (screening.state !== "needs_review") return { verdict: screening.verdict };
+  return { screening: await legacyReviewResult(job, companyCategory, screening, env.runtime) };
 }
 
 export async function sampleModelDecision<T>(env: FilterEnv, jobId: string, input: ChatCompletionsInput, parse: (args: string) => T, expectedTool?: string, options: ModelOptions = {}): Promise<T> {

@@ -1,9 +1,10 @@
+import { settled } from "./config/policy";
 import type { CandidatePolicy } from "./config/types";
 import type { Verdict } from "./criteria";
+import type { LegacyScreening } from "./screening/types";
 import type { NormalizedJob } from "./sources";
 
 export type LocationEligibility = { state: "eligible" | "ineligible" | "review"; reason: string; evidence: string[] };
-export class LocationEligibilityError extends Error {}
 const normalized = (text: string) => text.toLowerCase().replace(/u\.s\.(?:a\.)?/g, "us").replace(/d\.c\./g, "dc").replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
 const regionNames = "uk|united kingdom|canada|emea|europe|apac|australia|india|germany|france|ireland|united states|us|usa";
 const remoteRegion = new RegExp(`^(?:${regionNames})$`);
@@ -252,11 +253,13 @@ export function locationFactNamesPlaceOutside(fact: { sourceField: string; excer
   return touched.length > 0 && touched.every(span => labelOutside(span.label, arrangement, policy));
 }
 
-export function enforceLocationVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy): Verdict {
-  if (!verdict.match && verdict.hard_exclude !== "4") return verdict;
+/** A model rejection, location or otherwise, is recorded as given. A possible
+ * match is rejected where the posting places the role outside the eligible
+ * area, and becomes a review gap where the location cannot be settled. */
+export function enforceLocationVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy): LegacyScreening {
+  if (!verdict.match) return settled(verdict);
   const location = resolveLocationEligibility(job, policy);
-  if (!verdict.match && location.state !== "ineligible") throw new LocationEligibilityError("Model location exclusion is not established by approved policy");
-  if (location.state === "eligible") return verdict;
-  if (location.state === "review") throw new LocationEligibilityError(location.reason);
-  return { match: false, hard_exclude: "4", lane: null, reason: location.reason };
+  if (location.state === "eligible") return settled(verdict);
+  if (location.state === "review") return settled(verdict, [{ field: "location", reason: location.reason }]);
+  return settled({ match: false, hard_exclude: "4", lane: null, reason: location.reason });
 }

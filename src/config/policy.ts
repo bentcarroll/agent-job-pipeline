@@ -1,6 +1,7 @@
 import type { CandidatePolicy } from "./types";
 import type { CompanyCategory, NormalizedJob } from "../sources";
 import type { Verdict } from "../criteria";
+import type { LegacyScreening, ScreeningGap } from "../screening/types";
 
 const unsupportedEmploymentTokens = ["seasonal", "permanent", "internship", "freelance", "casual"] as const;
 const employmentName = (value: string) => value.toLowerCase().replace(/[-_ ]/g, "").replace(/^contractor$/, "contract");
@@ -43,7 +44,9 @@ export function ambiguousClearance(value: string): boolean {
     clearanceParts(clause).some(part => requiresClearance(part) && !mandatoryActive(part) && (!laterOrNegatedClearance(part) || /active|current|currently/i.test(part) && /application|applying|apply/i.test(part) && !/\bno\b|not required/i.test(part))) ||
     /\bor\b/i.test(clause) && clearanceParts(clause).some(part => requiresClearance(part) && /active|current|currently/i.test(part) && /application|applying|apply/i.test(part)));
 }
-export function postingEmployment(job: NormalizedJob, policy: CandidatePolicy): "allowed" | "excluded" | "unknown" {
+// "unstated" means the posting says nothing about the arrangement at all;
+// "unknown" means it says something the policy cannot resolve.
+export function postingEmployment(job: NormalizedJob, policy: CandidatePolicy): "allowed" | "excluded" | "unknown" | "unstated" {
   // Only arrangement assertions about this role count. Incidental contract work,
   // consulting with clients, and generic employment prose are not arrangements.
   const tokens = ["full[- ]?time", "part[- ]?time", "contract(?:or)?", "consulting", "fractional", "interim", "temporary", ...unsupportedEmploymentTokens, ...policy.employmentTypes.map(type => type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))].join("|");
@@ -55,6 +58,7 @@ export function postingEmployment(job: NormalizedJob, policy: CandidatePolicy): 
   const unresolvedAssertion = (clause: string) =>
     /^(?:this|the) (?:role|position|job)\b/i.test(clause.trim()) && /\b(?:employment|arrangement)\b/i.test(clause) && !supportedAssertion(clause);
   const observed = clauses(job.description ?? "").filter(clause => supportedAssertion(clause) || unresolvedAssertion(clause));
+  if (!observed.length && !job.employmentType) return "unstated";
   const body = observed.some(unresolvedAssertion) ? "unknown" : employmentEligibility(observed.join(" "), policy);
   if (!job.employmentType) return body;
   const structured = employmentEligibility(job.employmentType, policy);
@@ -116,25 +120,32 @@ function fullBody(job: NormalizedJob): boolean {
   return !!job.description?.trim() && coverage?.description.truncated === false && coverage.description.originalChars !== null &&
     !coverage.coverageGaps.length && !/\[(?:middle of posting|snapshot text) omitted\]/i.test(job.description);
 }
-export function enforcePolicyVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy, category?: CompanyCategory): Verdict {
-  const reject = (rule: string, reason: string): Verdict => ({ match: false, lane: null, hard_exclude: rule, reason });
+export function settled(verdict: Verdict, gaps: ScreeningGap[] = []): LegacyScreening {
+  return { state: gaps.length ? "needs_review" : verdict.match ? "match" : "no_match", verdict, gaps };
+}
+
+/** Settle a legacy verdict against the approved policy. A model rejection is
+ * recorded as given: the model read the posting, and asking again later
+ * would not change what it says. A possible match is rejected only where the
+ * posting itself proves an exclusion; anything the policy cannot confirm is
+ * named as a gap, so the card says what to check instead of being withheld. */
+export function enforcePolicyVerdict(job: NormalizedJob, verdict: Verdict, policy: CandidatePolicy, category?: CompanyCategory): LegacyScreening {
+  if (!verdict.match) return settled(verdict);
+  const reject = (rule: string, reason: string) => settled({ match: false, lane: null, hard_exclude: rule, reason });
+  const description = job.description ?? "";
   const employment = postingEmployment(job, policy);
-  const active = activeAtApplication(job.description ?? "");
+  const active = activeAtApplication(description);
+  const ambiguous = ambiguousClearance(description) && policy.clearance !== "allow";
   const below = fullBody(job) && compensationStatus(job, policy) === "below" && (!job.compensation || job.contentProvenance?.compensation.truncated === false);
-  if (verdict.match) {
-    if (!supportedLane(verdict.lane, policy, category)) throw new Error("Model lane is not supported by candidate policy/company evidence");
-    if (employment === "unknown") throw new Error("Employment eligibility requires review under the approved policy");
-    if (ambiguousClearance(job.description ?? "") && policy.clearance !== "allow") throw new Error("Clearance timing requires review under the approved policy");
-    if (employment === "excluded") return reject("1", "The disclosed employment arrangement is outside the approved policy.");
-    if (active && policy.clearance === "exclude_active") return reject("2", "Active clearance at application is excluded by the approved policy.");
-    if (active && policy.clearance === "review") throw new Error("Active clearance requires review under the approved policy");
-    if (below) return reject("3", "Disclosed comparable annual base pay is below the approved floor.");
-  } else {
-    if (verdict.hard_exclude === null && !fullBody(job)) throw new Error("No-function-fit requires complete posting context; review required");
-    // Unsupported model hard exclusions are retried, never recorded as a permanent rejection.
-    if (verdict.hard_exclude === "1" && employment !== "excluded" ||
-        verdict.hard_exclude === "2" && !(active && policy.clearance === "exclude_active") ||
-        verdict.hard_exclude === "3" && !below) throw new Error("Model hard exclusion is not supported by candidate policy/evidence");
-  }
-  return verdict;
+  if (employment === "excluded") return reject("1", "The disclosed employment arrangement is outside the approved policy.");
+  if (active && policy.clearance === "exclude_active" && !ambiguous) return reject("2", "Active clearance at application is excluded by the approved policy.");
+  if (below) return reject("3", "Disclosed comparable annual base pay is below the approved floor.");
+  const gaps: ScreeningGap[] = [];
+  const lane = policy.functionLanes.find(item => item.id === verdict.lane);
+  if (!lane) gaps.push({ field: "function", reason: `Screening named lane ${verdict.lane}, which your profile does not define.` });
+  else if (!supportedLane(verdict.lane, policy, category)) gaps.push({ field: "company_category", reason: `Lane ${lane.id} is limited to ${lane.companyCategories.join(", ")} companies in your profile; this company's category is not verified.` });
+  if (employment === "unknown") gaps.push({ field: "employment", reason: `The employment arrangement is stated ambiguously; your profile allows ${policy.employmentTypes.join(", ")}.` });
+  if (ambiguous) gaps.push({ field: "clearance", reason: `A security clearance is mentioned but its timing is unclear; your profile ${policy.clearance === "review" ? "asks to review" : "excludes"} an active clearance at application.` });
+  else if (active && policy.clearance === "review") gaps.push({ field: "clearance", reason: "The posting requires an active security clearance at application; your profile asks to review such roles." });
+  return settled(verdict, gaps);
 }

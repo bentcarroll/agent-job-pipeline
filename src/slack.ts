@@ -237,13 +237,13 @@ export function applyMark(blocks: any[], jobId: string, mark: Mark | null): any[
 }
 
 function screeningLabel(decision: ScreeningDecision): string {
-  return { match: "Possible match", no_match: "Does not meet screening criteria", needs_review: "Needs evidence review", retry: "Screening unavailable; retry needed" }[decision.state];
+  return { match: "Possible match", no_match: "Does not meet screening criteria", needs_review: "Needs review", retry: "Screening unavailable; retry needed" }[decision.state];
 }
 
 function screeningBlocks(decision: ScreeningDecision): any[] {
   const groups = [
     ["qualifications", "Qualifications to confirm", decision.qualificationWarnings],
-    ["gaps", "Evidence gaps", decision.gaps],
+    ["gaps", "To confirm", decision.gaps],
     ["evidence", "Retained source evidence", decision.evidence.map(fact => `${({ description: "Posting", compensation: "Compensation", location: "Location", employmentType: "Employment type", title: "Title", department: "Department", companyCategory: "Verified company category", workplaceType: "Workplace type", secondaryLocations: "Other locations" })[fact.sourceField]}: “${fact.excerpt}”`)],
   ] as const;
   return groups.flatMap(([id, title, values]) => {

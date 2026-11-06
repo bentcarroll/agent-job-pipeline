@@ -157,6 +157,7 @@ export const REQUIRED = [
     "src/screening/experiments/qualification-candidate.ts",
     "src/screening/experiments/qualifications.ts",
     "src/screening/experiments/score.ts",
+    "src/screening/legacy.ts",
     "src/screening/policy-fixtures.ts",
     "src/screening/policy-report.ts",
     "src/screening/snapshot.ts",

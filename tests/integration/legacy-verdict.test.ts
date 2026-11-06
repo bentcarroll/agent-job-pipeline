@@ -12,7 +12,9 @@ import {createDatabase,loadSchema} from "./harness";
 let db:D1Database,dispose:()=>Promise<void>;
 beforeEach(async()=>{({db,dispose}=await createDatabase());await loadSchema(db,"root");vi.spyOn(console,"log").mockImplementation(()=>{});vi.spyOn(console,"error").mockImplementation(()=>{});});
 afterEach(async()=>{vi.restoreAllMocks();vi.unstubAllGlobals();await dispose();});
-it.each(["fixed","unbounded"])("%s worker retains retry without an assessed row for uncertain negatives",async kind=>{
+// Malformed model output stays a retry. A complete no-fit verdict on a posting
+// without provenance is the model's decision and is recorded, not re-asked.
+it.each(["fixed","unbounded"])("%s worker retries malformed negatives and records a complete no-fit verdict",async kind=>{
  const instance=JSON.parse(readFileSync(new URL("../../examples/instance.json",import.meta.url),"utf8"));instance.screeningMode="legacy";
  await db.prepare("INSERT INTO fixed_baselines VALUES (?,?,?)").bind(instance.instanceId,baselineSources(CHICAGO_OPERATIONS.search.sources),"2026-01-01").run();
  const cases=['{"match":false,"reason":"unterminated','{"match":false}',JSON.stringify({match:false,lane:null,hard_exclude:"99",reason:"Unknown"}),JSON.stringify({match:false,lane:null,hard_exclude:null,reason:"No fit"})];
@@ -30,6 +32,7 @@ it.each(["fixed","unbounded"])("%s worker retains retry without an assessed row 
  const prefix=kind==="fixed"?"greenhouse:Example Automation:":"greenhouse:example-automation:";
  await db.prepare("INSERT INTO discovery_retries VALUES (?,?, 'filter',2,'earlier','synthetic',0,0)").bind(pipeline,prefix+"800").run();
  await new Workflow({} as any,env as any).run({instanceId:"uncertain-"+kind,payload:{}} as any,step as any);
- expect(calls).toHaveLength(7);expect(await db.prepare("SELECT count(*) n FROM jobs").first()).toEqual({n:0});
- expect((await db.prepare("SELECT job_id,attempts FROM discovery_retries ORDER BY job_id").all()).results).toEqual(cases.map((_,i)=>({job_id:prefix+(800+i),attempts:i===0?3:1})));
+ expect(calls).toHaveLength(7);
+ expect((await db.prepare("SELECT id,match,match_hard_exclude,match_reason FROM jobs").all()).results).toEqual([{id:prefix+"803",match:0,match_hard_exclude:null,match_reason:"No fit"}]);
+ expect((await db.prepare("SELECT job_id,attempts FROM discovery_retries ORDER BY job_id").all()).results).toEqual(cases.slice(0,3).map((_,i)=>({job_id:prefix+(800+i),attempts:i===0?3:1})));
 });

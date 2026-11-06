@@ -78,15 +78,16 @@ export async function saveResolutionResult(db: D1Database, requestId: string, ge
 }
 
 export async function readAdvisory(db: D1Database, requestId: string): Promise<{
-  verdict: Verdict | null; failure: string | null } | null> {
+  verdict: Verdict | null; failure: string | null; gaps: string[] } | null> {
   const row = await db.prepare("SELECT advisory_json FROM manual_intake_requests WHERE id=?")
     .bind(requestId).first<{advisory_json:string|null}>();
-  return row?.advisory_json ? JSON.parse(row.advisory_json) as {
-    verdict: Verdict | null; failure: string | null } : null;
+  if (!row?.advisory_json) return null;
+  const stored = JSON.parse(row.advisory_json) as { verdict: Verdict | null; failure: string | null; gaps?: string[] };
+  return { verdict: stored.verdict, failure: stored.failure, gaps: stored.gaps ?? [] };
 }
 
 export async function saveAdvisory(db: D1Database, requestId: string, generation: number,
-  verdict: Verdict | null, failure: string | null, at: string, criteriaVersion?: string): Promise<boolean> {
+  verdict: Verdict | null, failure: string | null, at: string, criteriaVersion?: string, gaps: string[] = []): Promise<boolean> {
   const result = await db.prepare(`UPDATE manual_intake_requests SET advisory_json=?,
     state=CASE WHEN EXISTS (SELECT 1 FROM jobs j JOIN manual_intake_jobs m ON m.job_id=j.id
       WHERE j.id=manual_intake_requests.job_id AND m.owner_request_id=manual_intake_requests.id
@@ -94,7 +95,7 @@ export async function saveAdvisory(db: D1Database, requestId: string, generation
         AND j.discovery_source='manual_add') THEN 'ready' ELSE 'already_tracked' END,
     stage='deliver',failure_code=?,next_attempt_at=0,updated_at=?
     WHERE id=? AND workflow_generation=? AND state IN ('saved','screening','ready')`)
-    .bind(JSON.stringify({ verdict, failure, criteriaVersion: criteriaVersion ?? null }), failure ? "advisory_unavailable" : null,
+    .bind(JSON.stringify({ verdict, failure, criteriaVersion: criteriaVersion ?? null, gaps }), failure ? "advisory_unavailable" : null,
       at, requestId, generation).run();
   return result.meta.changes === 1;
 }

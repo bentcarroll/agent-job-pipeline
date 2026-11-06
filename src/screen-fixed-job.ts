@@ -1,7 +1,9 @@
 import { fetchPosting, fixedSourceCompanyCategory, fixedSourceForJob, matchesFixedWorkdaySource, type Source, type NormalizedJob } from "./sources";
-import { filterJob, type FilterEnv, type ModelOptions } from "./filter";
+import { screenLegacyJob, type FilterEnv, type ModelOptions } from "./filter";
 import { parseJobUrl } from "./unbounded/discovery";
 import { evaluateJob } from "./screening/evaluate";
+import type { ScreeningResult } from "./screening/types";
+import type { Verdict } from "./criteria";
 
 // Called only after the fixed-board Workflow removes existing/known jobs.
 // Keep the established fixed-board ID only when fresh detail proves the same
@@ -24,11 +26,11 @@ export async function screenFixedJob(env: FilterEnv, job: NormalizedJob, sources
 // The Workflow records its durable fetch receipt between these two phases.
 // Keep the original combined API for callers that do not account by stage.
 export async function screenHydratedFixedJob(env: FilterEnv, hydrated: NormalizedJob, sources: readonly Source[],
-  modelOptions: ModelOptions = {}) {
+  modelOptions: ModelOptions = {}): Promise<{ job: NormalizedJob; verdict?: Verdict; screening?: ScreeningResult }> {
   const category = fixedSourceCompanyCategory(hydrated, sources);
   return env.SCREENING_MODE === "evidence"
     ? { job: hydrated, screening: await evaluateJob(env, hydrated, category, modelOptions) }
-    : { job: hydrated, verdict: await filterJob(env, hydrated, category, modelOptions) };
+    : { job: hydrated, ...(await screenLegacyJob(env, hydrated, category, modelOptions)) };
 }
 
 export async function hydrateFixedJob(job: NormalizedJob, refreshLever: boolean, sources: readonly Source[]): Promise<NormalizedJob | null> {

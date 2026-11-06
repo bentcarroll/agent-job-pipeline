@@ -16,8 +16,7 @@ import { screeningHoldMessage, applicationIdentityHoldMessage } from "../screeni
 import { readDiscoveryApplicationState, reconcileDiscoveryHolds, actionableHoldErrors } from "../discovery/application-state";
 import { loadApplicationAwareNotifications } from "../discovery/application-notifications";
 import { splitSlackText } from "../slack-text";
-import { LocationEligibilityError } from "../location";
-import { filterJob, type FilterEnv } from "../filter";
+import { screenLegacyJob, type FilterEnv } from "../filter";
 import type { Verdict } from "../criteria";
 import { jsonToStream, streamToJson } from "../step-stream";
 import { evaluateJob, screeningRetryDecision } from "../screening/evaluate";
@@ -547,14 +546,13 @@ export class UnboundedAgentWorkflow extends WorkflowEntrypoint<Env, {}> {
         if (applicationState.kind !== "clear") return { ok: true as const, applicationState };
         try {
           return evidenceMode
-            ? { ok: true as const, screening: await evaluateJob(env, job, undefined, { timing: "workflow" }) }
-            : { ok: true as const, verdict: await filterJob(env, job, undefined, { timing: "workflow" }) };
+            ? { ok: true as const, verdict: undefined, screening: await evaluateJob(env, job, undefined, { timing: "workflow" }) }
+            : { ok: true as const, ...(await screenLegacyJob(env, job, undefined, { timing: "workflow" })) };
         } catch (e) {
           if (e instanceof LeaseLostError) throw e;
           const error = `${job.id}: ${(e as Error).message}`;
           await recordDiscoveryFailure(env, db, lease, job.id, "filter", error, env.instance.instanceId);
-          return { ok: false as const, error,
-            failureCode: e instanceof LocationEligibilityError ? "location_review" : fetchErrorCode(error) };
+          return { ok: false as const, error, failureCode: fetchErrorCode(error) };
         }
       }, evidenceMode ? error => recordDiscoveryFailure(env, db, lease, job.id, "filter", error, env.instance.instanceId) : undefined);
       // Reconstruct counts outside callbacks: completed steps replay cached
@@ -657,7 +655,7 @@ export class UnboundedAgentWorkflow extends WorkflowEntrypoint<Env, {}> {
     let delivered = 0;
     let locationHeld = 0;
     if (notifyEnabled) {
-      const applicationPlan = await loadApplicationAwareNotifications(step, db, "unbounded_search", MAX_NOTIFICATIONS_PER_RUN, evidenceMode, sources, env.instance.instanceId, env.runtime);
+      const applicationPlan = await loadApplicationAwareNotifications(step, db, "unbounded_search", MAX_NOTIFICATIONS_PER_RUN, sources, env.instance.instanceId, env.runtime);
       const candidates = applicationPlan.candidates;
       const locationPlan = await prepareLocationNotifications(step, db, lease, applicationPlan.ready, sources, env.runtime.candidate.policy, new Map(fetched.map(job => [job.id, job])));
       const pending = locationPlan.ready;
@@ -675,7 +673,7 @@ export class UnboundedAgentWorkflow extends WorkflowEntrypoint<Env, {}> {
         const eligiblePending = pending.filter(item => !blockedIds.has(item.job.id));
         const locationHolds = locationPlan.held.filter(hold => !blockedIds.has(hold.jobId));
         if (!(eligiblePending.length > 0 || locationHolds.length > 0 || holdPlan.screening.length > 0 || holdPlan.identityReview.length > 0)) return jsonToStream([]);
-        const header = headerMessage(eligiblePending.length, matches, checked, knownRows.length, actionableHoldErrors(discoveryErrors, holdPlan), evidenceMode ? eligiblePending.filter(item => item.decision?.state === "needs_review").length : undefined, needsReview) +
+        const header = headerMessage(eligiblePending.length, matches, checked, knownRows.length, actionableHoldErrors(discoveryErrors, holdPlan), eligiblePending.filter(item => item.decision?.state === "needs_review").length, needsReview) +
           (holdPlan.screening.length ? `\n${screeningHoldMessage(holdPlan.screening)}` : "") +
           (holdPlan.identityReview.length ? `\n${applicationIdentityHoldMessage(holdPlan.identityReview)}` : "") +
           (locationHolds.length ? `\n${locationHoldMessage(locationHolds)}` : "");
@@ -693,14 +691,16 @@ export class UnboundedAgentWorkflow extends WorkflowEntrypoint<Env, {}> {
         const { job, verdict, decision, evaluationId } = pending[i];
         const notificationId = evaluationId ?? job.id;
         const sent = await step.do(`notify:${notificationId}`, async () => {
-          const stillPending = isCurrentCriteria(pending[i].criteriaVersion, env.runtime) && (evidenceMode
+          // A legacy needs_review is stored as an evaluation, so the delivery
+          // receipt follows the row shape rather than the screening mode.
+          const stillPending = isCurrentCriteria(pending[i].criteriaVersion, env.runtime) && (evaluationId
             ? await isScreeningNotificationPending(db, job.id, evaluationId, lease.pipeline, env.instance.instanceId, env.runtime.criteriaVersion)
             : await isLegacyNotificationPending(db, job.id, lease.pipeline, env.instance.instanceId, env.runtime.criteriaVersion));
           if (!stillPending || !isLocationNotificationReady(pending[i], env.runtime.candidate.policy)) return false;
           if ((await readDiscoveryApplicationState(db, job, sources)).kind !== "clear") return false;
           if (accounting) await recordDeliveryAttempt(db, lease, notificationId, new Date().toISOString());
           await postMatch(env, job, verdict, undefined, decision);
-          if (evidenceMode) await markScreeningNotified(db, job.id, evaluationId, new Date().toISOString(), lease);
+          if (evaluationId) await markScreeningNotified(db, job.id, evaluationId, new Date().toISOString(), lease);
           else await markNotified(db, [job.id], new Date().toISOString(), lease);
           await clearFailures(db, lease, [job.id]);
           return true;
@@ -793,18 +793,17 @@ function headerMessage(
   newPostingsChecked: number,
   alreadyApplied: number,
   errors: string[],
-  deliveringReviews?: number,
-  needsReviewThisRun = 0,
+  deliveringReviews: number,
+  needsReviewThisRun: number,
 ): string {
   // `delivering` counts what is being sent now, which is this run's matches
   // plus any earlier run left undelivered — so it must not be described as
   // "new", or a drained backlog would read as a sudden surge of fresh finds.
   const carried = delivering - matchedThisRun - needsReviewThisRun;
   const lines = [
-    (deliveringReviews === undefined ? `:telescope: Unbounded search: ${delivering} match(es) to review`
-      : `:telescope: Unbounded search: ${delivering - deliveringReviews} possible match(es); ${deliveringReviews} need(s) evidence review`) +
+    `:telescope: Unbounded search: ${delivering - deliveringReviews} possible match(es); ${deliveringReviews} need(s) review` +
       (carried > 0 ? ` (${matchedThisRun + needsReviewThisRun} new, ${carried} carried over from an earlier run).` : "."),
-    `${newPostingsChecked} new posting(s) checked this run.` + (deliveringReviews === undefined ? "" : ` ${matchedThisRun} possible match(es), ${needsReviewThisRun} need(s) evidence review.`),
+    `${newPostingsChecked} new posting(s) checked this run. ${matchedThisRun} possible match(es), ${needsReviewThisRun} need(s) review.`,
   ];
   if (alreadyApplied > 0) {
     lines.push(`(${alreadyApplied} skipped — already tracked as an existing application.)`);
@@ -985,7 +984,12 @@ async function addJobByUrl(rawEnv: Env, command: SlashCommand): Promise<void> {
     let screening: Pick<ScreeningEvaluation, "snapshot" | "decision"> | undefined;
     try {
       if (evidenceMode) screening = await evaluateJob(env, job);
-      else verdict = await filterJob(env, job);
+      else {
+        // A possible match the policy cannot confirm is posted the same way, with its gaps.
+        const legacy = await screenLegacyJob(env, job);
+        verdict = legacy.verdict ?? null;
+        screening = legacy.screening;
+      }
     } catch {
       verdict = null;
       if (evidenceMode) screening = { snapshot: null, decision: screeningRetryDecision("Screening could not be prepared; no assessment is available.", env.runtime) };

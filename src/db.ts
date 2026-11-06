@@ -369,61 +369,8 @@ export async function setApplicationStatus(
 }
 
 
-export type PendingMatch = { job: NormalizedJob; verdict: Verdict; criteriaVersion: string };
-
 export function notificationPipeline(discoverySource: string): "fixed_boards" | "unbounded_discovery" {
   return discoverySource === "fixed_board" ? "fixed_boards" : "unbounded_discovery";
-}
-
-// Stamp notified_at only after Slack accepts delivery. Assessed but undelivered
-// matches remain in this recoverable notification queue across interruptions.
-export async function getPendingNotifications(
-  db: D1Database,
-  discoverySource: string,
-  limit: number,
-  afterJobId: string | null = null,
-  instanceId?: string,
-): Promise<PendingMatch[]> {
-  const { results } = await db
-    .prepare(
-      `SELECT id, company, title, url, location, department, is_remote, employment_type,
-              posted_at, compensation, match_lane, match_hard_exclude, match_reason, criteria_version
-         FROM jobs j
-        WHERE match = 1 AND notified_at IS NULL AND discovery_source = ?
-          AND application_status = 'not_applied' AND is_known_application = 0
-          AND j.criteria_version=(SELECT criteria_version FROM candidate_active_configs WHERE instance_id=?)
-          AND NOT EXISTS (SELECT 1 FROM discovery_retries r WHERE r.pipeline = ?
-            AND r.job_id = j.id AND r.next_attempt_at > ?)
-          AND (? IS NULL OR (j.first_seen_at,j.id) > (SELECT first_seen_at,id FROM jobs WHERE id=?))
-        ORDER BY first_seen_at, id
-        LIMIT ?`,
-    )
-    .bind(discoverySource, instanceId ?? null, notificationPipeline(discoverySource), Date.now(), afterJobId, afterJobId, limit)
-    .all<any>();
-
-  return results.map((r) => ({
-    criteriaVersion: r.criteria_version,
-    job: {
-      id: r.id,
-      company: r.company,
-      title: r.title,
-      url: r.url,
-      location: r.location,
-      department: r.department,
-      isRemote: r.is_remote === null ? null : r.is_remote === 1,
-      employmentType: r.employment_type,
-      postedAt: r.posted_at,
-      compensation: r.compensation,
-      // Legacy notification rows omit bodies; evidence-mode snapshots live separately.
-      description: null,
-    },
-    verdict: {
-      match: true,
-      hard_exclude: r.match_hard_exclude,
-      lane: r.match_lane,
-      reason: r.match_reason ?? "",
-    },
-  }));
 }
 
 // Repeat inside the send callback: a disposition or hold can change after

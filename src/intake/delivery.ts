@@ -4,16 +4,15 @@ import type { Verdict } from "../criteria";
 import type { ManualCard, SendOutcome } from "./types";
 
 export function displayVerdict(card: ManualCard): Verdict {
-  if (card.advisoryError === "location_review") return {
-    match: true, lane: null, hard_exclude: null,
-    reason: "Added by hand. Screening could not settle the location against your criteria; check where this role can be done.",
-  };
   if (card.advisoryError || !card.verdict) return {
     match: true, lane: null, hard_exclude: null,
     reason: "Added by hand. Advisory screening was unavailable; qualifications need review.",
   };
   if (!card.verdict.match) return { ...card.verdict,
     reason: `Added by hand. Advisory screening disagreed: ${card.verdict.reason}` };
+  // A possible match the policy could not confirm: the gaps say what to check.
+  if (card.gaps.length) return { ...card.verdict,
+    reason: `Added by hand. ${card.verdict.reason} Needs review: ${card.gaps.join(" ")}` };
   return { ...card.verdict, reason: `Added by hand. ${card.verdict.reason}` };
 }
 
@@ -30,9 +29,14 @@ export async function sendManualCard(env: SlackPostEnv, card: ManualCard,
   const marker = { type: "context", block_id: `manual_intake_${card.requestId}`,
     elements: [{ type: "plain_text", text: "Added by hand" }] };
   const locationGaps = card.job.locationMetadata?.coverageGaps ?? [];
-  const warnings = locationGaps.length ? [{ type: "section", block_id: "manual_location_warnings",
+  // applyMark keeps only job_detail, screening_* and manual_intake_* blocks
+  // when it rebuilds the card, so both notes need the manual_intake_ prefix.
+  const warnings = locationGaps.length ? [{ type: "section", block_id: "manual_intake_location_warnings",
     text: { type: "plain_text", text: `Location details to confirm: ${locationGaps.join("; ").slice(0, 2800)}` } }] : [];
-  const blocks = applyMark([...renderJobBlocks(card.job, displayVerdict(card)), ...warnings, marker],
+  // Plain text keeps posting-derived wording inert, as the discovery card does.
+  const toConfirm = card.gaps.length ? [{ type: "section", block_id: "manual_intake_review_gaps",
+    text: { type: "plain_text", text: ["To confirm", ...card.gaps.map(gap => `• ${gap}`)].join("\n").slice(0, 2800) } }] : [];
+  const blocks = applyMark([...renderJobBlocks(card.job, displayVerdict(card)), ...toConfirm, ...warnings, marker],
     card.job.id, { status: "needs_materials", userId: card.userId,
       at: new Date(card.selectedAt) });
   let response: Response;

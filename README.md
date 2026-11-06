@@ -7,7 +7,7 @@ It was built for a career that doesn't fit one job title. You can search in seve
 ## How it works
 
 - **Discovery.** Two Cloudflare Workers pull new postings from the job boards of employers you list and from web searches for your role phrases.
-- **Screening.** A small model on Cloudflare Workers AI checks each posting against your criteria: function, level, pay, location and work arrangement. Unknown pay or eligibility goes to review instead of being guessed.
+- **Screening.** A small model on Cloudflare Workers AI checks each posting against your criteria: function, level, pay, location and work arrangement. A possible match it can't fully confirm (the work arrangement reads two ways, the location can't be settled, a lane asks for a kind of company the search can't verify) is still posted, marked for review with what to check.
 - **Review.** Matches arrive in a Slack channel. `/job <link>` adds any posting by hand.
 - **Materials.** Ask your coding assistant to prepare materials for a job. It drafts from your verified career facts, uses the posting's terms where your experience supports them, never invents a fact, renders the PDFs and inspects every page.
 - **Tracking (optional).** Reads Gmail read-only for application confirmations, rejections and interview invitations, updates your ledger, and asks in Slack when it isn't sure.

@@ -7,13 +7,14 @@ export type BoardDigest = {
   // undelivered backlog.
   delivering: number;
   matchedThisRun: number;
-  deliveringReviews?: number;
-  needsReviewThisRun?: number;
+  // Possible matches the policy could not confirm, posted with their gaps.
+  deliveringReviews: number;
+  needsReviewThisRun: number;
   // Postings that reached a real verdict this run.
   checked: number;
   alreadyApplied: number;
   fetchErrors: string[];
-  // Postings the model failed on. They receive a separate retry cooldown.
+  // Postings the model failed on. Each gets up to three tries, hours apart.
   filterFailures: number;
   totalBoards: number;
   cap: number;
@@ -34,13 +35,11 @@ export function boardDigestMessage(d: BoardDigest): string {
 
   // `delivering` includes carried-over matches, so it must not be described
   // as "new", or a drained backlog would read as a sudden surge of fresh finds.
-  const carried = d.delivering - d.matchedThisRun - (d.needsReviewThisRun ?? 0);
+  const carried = d.delivering - d.matchedThisRun - d.needsReviewThisRun;
   const lines = [
-    (d.deliveringReviews === undefined
-      ? `:mag: Company boards: ${d.delivering} match(es) to review`
-      : `:mag: Company boards: ${d.delivering - d.deliveringReviews} possible match(es); ${d.deliveringReviews} need(s) evidence review`) +
-      (carried > 0 ? ` (${d.matchedThisRun + (d.needsReviewThisRun ?? 0)} new, ${carried} carried over from an earlier run).` : "."),
-    `${d.checked} new posting(s) checked this run.` + (d.needsReviewThisRun === undefined ? "" : ` ${d.matchedThisRun} possible match(es), ${d.needsReviewThisRun} need(s) evidence review.`),
+    `:mag: Company boards: ${d.delivering - d.deliveringReviews} possible match(es); ${d.deliveringReviews} need(s) review` +
+      (carried > 0 ? ` (${d.matchedThisRun + d.needsReviewThisRun} new, ${carried} carried over from an earlier run).` : "."),
+    `${d.checked} new posting(s) checked this run. ${d.matchedThisRun} possible match(es), ${d.needsReviewThisRun} need(s) review.`,
   ];
   if (d.alreadyApplied > 0) {
     lines.push(`(${d.alreadyApplied} skipped — already tracked as an existing application.)`);
@@ -54,5 +53,5 @@ export function boardDigestMessage(d: BoardDigest): string {
 }
 
 function filterFailureLine(n: number): string {
-  return `${n} posting(s) couldn't be judged — they can be retried after a cooldown.`;
+  return `${n} posting(s) couldn't be judged — each is retried later, up to three tries in all.`;
 }

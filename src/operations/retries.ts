@@ -1,6 +1,11 @@
 import { fencedBatch, type DiscoveryLease, type DiscoveryPipeline } from "./leases";
 
 const BASE_DELAY = 6 * 3600_000;
+// A posting gets three tries: now, six hours later, twelve hours after that.
+// After the third failure it rests for a year with its last error on record,
+// so a posting the model cannot read never costs a model call a day for ever.
+export const MAX_ATTEMPTS = 3;
+const RETIRED_DELAY = 365 * 86_400_000;
 const CHUNK = 50;
 
 export async function recordFailure(db: D1Database, lease: DiscoveryLease, id: string, stage: "fetch" | "filter", error: string, at = Date.now(), extraStatements: D1PreparedStatement[] = []): Promise<void> {
@@ -19,9 +24,10 @@ export async function recordFailure(db: D1Database, lease: DiscoveryLease, id: s
       last_run_id = excluded.last_run_id,
       last_error = excluded.last_error,
       failed_at = excluded.failed_at,
-      next_attempt_at = excluded.failed_at + ? * (1 << MIN(discovery_retries.attempts, 3))
+      next_attempt_at = CASE WHEN discovery_retries.attempts + 1 >= ? THEN excluded.failed_at + ?
+        ELSE excluded.failed_at + ? * (1 << MIN(discovery_retries.attempts, 3)) END
     WHERE discovery_retries.last_run_id <> excluded.last_run_id`)
-    .bind(lease.pipeline, id, stage, lease.owner, error.slice(0, 1000), at, at + BASE_DELAY, BASE_DELAY), ...extraStatements]);
+    .bind(lease.pipeline, id, stage, lease.owner, error.slice(0, 1000), at, at + BASE_DELAY, MAX_ATTEMPTS, RETIRED_DELAY, BASE_DELAY), ...extraStatements]);
     trace("retry_write_ok");
   } catch (failure) {
     trace("retry_write_error");

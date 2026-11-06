@@ -1,7 +1,6 @@
 import { isCurrentCriteria } from "../config/run-context";
 import type { RuntimeConfig } from "../config/types";
 import type { Source } from "../sources";
-import { getPendingNotifications } from "../db";
 import { getPendingScreeningNotifications, type PendingScreeningNotification } from "../screening/store";
 import type { DiscoverySteps } from "../operations/discovery-run";
 import { jsonToStream, streamToJson } from "../step-stream";
@@ -17,16 +16,15 @@ type NotificationPlan = {
 // allowance, retaining their links for the frozen review summary. Keyset
 // paging tolerates earlier rows becoming ineligible between page reads.
 export async function loadApplicationAwareNotifications(step: DiscoverySteps, db: D1Database,
-  discoverySource: "fixed_board" | "unbounded_search", limit: number, evidenceMode: boolean, sources: readonly Source[], instanceId?: string, runtime?: RuntimeConfig): Promise<NotificationPlan> {
+  discoverySource: "fixed_board" | "unbounded_search", limit: number, sources: readonly Source[], instanceId?: string, runtime?: RuntimeConfig): Promise<NotificationPlan> {
   const plan: NotificationPlan = { candidates: [], ready: [], held: [] };
   if (!Number.isInteger(limit) || limit < 1) return plan;
   let after: string | null = null;
   for (let pageNumber = 0; plan.ready.length < limit; pageNumber++) {
-    const checkpoint = await step.do(pageNumber === 0 ? "load-pending-notifications" : `load-pending-notifications-page:${pageNumber}`, async () => {
-      // Preserve the old first-page checkpoint shapes, including legacy arrays.
-      if (evidenceMode) return jsonToStream(await getPendingScreeningNotifications(db, discoverySource, limit, after, instanceId));
-      return getPendingNotifications(db, discoverySource, limit, after, instanceId);
-    });
+    // One query serves both modes: plain verdict rows and evaluations,
+    // including a legacy needs_review. Older checkpoints replay as arrays.
+    const checkpoint = await step.do(pageNumber === 0 ? "load-pending-notifications" : `load-pending-notifications-page:${pageNumber}`,
+      async () => jsonToStream(await getPendingScreeningNotifications(db, discoverySource, limit, after, instanceId)));
     const page: PendingScreeningNotification[] = checkpoint instanceof ReadableStream
       ? await streamToJson<PendingScreeningNotification[]>(checkpoint) : checkpoint;
     if (!page.length) break;

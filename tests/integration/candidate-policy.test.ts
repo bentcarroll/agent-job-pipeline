@@ -27,8 +27,8 @@ describe("configured model boundary and deterministic policy", () => {
   it("overrides a legacy positive when comparable salary is below this candidate's floor", async () => {
     const runtime = await loadRuntimeConfig(BOSTON_ENGINEERING);
     const env = { runtime, AI_GATEWAY_ID: "synthetic", AI: { run: async () => ({ choices: [{ message: { tool_calls: [{ type: "function", function: { name: "record_verdict", arguments: JSON.stringify({ match: true, lane: "A", hard_exclude: null, reason: "Possible fit." }) } }] }, finish_reason: "tool_calls" }] }) } } as unknown as FilterEnv;
-    expect(await filterJob(env, completePosting({ location: "Boston, MA", compensation: "Annual base salary USD 110,000 - USD 120,000" }), "applied AI")).toMatchObject({ match: false, hard_exclude: "3" });
-    expect(await filterJob({ ...env, runtime: await loadRuntimeConfig(CHICAGO_OPERATIONS) }, completePosting({ compensation: "Annual base salary USD 110,000 - USD 120,000" }), "applied AI")).toMatchObject({ match: true });
+    expect(await filterJob(env, completePosting({ location: "Boston, MA", compensation: "Annual base salary USD 110,000 - USD 120,000" }), "applied AI")).toMatchObject({ state: "no_match", verdict: { match: false, hard_exclude: "3" } });
+    expect(await filterJob({ ...env, runtime: await loadRuntimeConfig(CHICAGO_OPERATIONS) }, completePosting({ compensation: "Annual base salary USD 110,000 - USD 120,000" }), "applied AI")).toMatchObject({ state: "match", gaps: [] });
   });
 });
 
@@ -41,14 +41,15 @@ describe("legacy guards share the approved candidate policy", () => {
     candidate.approval.configSha256 = await candidateCriteriaVersion(candidate);
     const runtime = await loadRuntimeConfig(candidate);
     const env = { runtime, AI_GATEWAY_ID: "synthetic", AI: { run: async () => ({ choices: [{ message: { tool_calls: [{ function: { name: "record_verdict", arguments: JSON.stringify({ match: true, lane: "A", hard_exclude: null, reason: "Fit." }) } }] }, finish_reason: "tool_calls" }] }) } } as unknown as FilterEnv;
-    const result = filterJob(env, completePosting({ description: "Lead operations. Must already hold active clearance at application." }));
-    if (clearance === "review") await expect(result).rejects.toThrow(/review/);
-    else expect(await result).toMatchObject(clearance === "allow" ? { match: true } : { match: false, hard_exclude: "2" });
+    const result = await filterJob(env, completePosting({ description: "Lead operations. Must already hold active clearance at application." }));
+    if (clearance === "review") expect(result).toMatchObject({ state: "needs_review", gaps: [{ field: "clearance" }] });
+    else expect(result).toMatchObject(clearance === "allow" ? { state: "match" } : { verdict: { match: false, hard_exclude: "2" } });
   });
-  it("does not persist a salary rejection when the active floor is already met", async () => {
+  it("records a model pay exclusion the policy cannot verify as the model gave it", async () => {
     const runtime = await loadRuntimeConfig(CHICAGO_OPERATIONS);
-    const env = { runtime, AI_GATEWAY_ID: "synthetic", AI: { run: async () => ({ choices: [{ message: { tool_calls: [{ function: { name: "record_verdict", arguments: JSON.stringify({ match: false, lane: null, hard_exclude: "3", reason: "Wrong floor." }) } }] }, finish_reason: "tool_calls" }] }) } } as unknown as FilterEnv;
-    await expect(filterJob(env, completePosting({ compensation: "Annual base salary USD 110,000 - USD 120,000" }))).rejects.toThrow(/not supported/);
+    const pay = { match: false, lane: null, hard_exclude: "3", reason: "Wrong floor." };
+    const env = { runtime, AI_GATEWAY_ID: "synthetic", AI: { run: async () => ({ choices: [{ message: { tool_calls: [{ function: { name: "record_verdict", arguments: JSON.stringify(pay) } }] }, finish_reason: "tool_calls" }] }) } } as unknown as FilterEnv;
+    expect(await filterJob(env, completePosting({ compensation: "Annual base salary USD 110,000 - USD 120,000" }))).toEqual({ state: "no_match", verdict: pay, gaps: [] });
   });
 });
 
@@ -61,29 +62,29 @@ describe("review repairs at the legacy and evidence model boundary", () => {
     candidate.approval.configSha256 = await candidateCriteriaVersion(candidate);
     return { runtime: await loadRuntimeConfig(candidate), AI_GATEWAY_ID: "synthetic", AI: { run: async () => ({ choices: [{ message: { tool_calls: [{ function: { name: "record_verdict", arguments: JSON.stringify(verdict) } }] }, finish_reason: "tool_calls" }] }) } as unknown as Ai };
   }
-  it("I1 refuses a legacy fixed-pay rejection backed by an unparsed higher alternative", async () => {
-    const env = await configured({}, { match: false, lane: null, hard_exclude: "3", reason: "Unsupported ceiling." });
-    await expect(filterJob(env, completePosting({ compensation: "Annual base salary USD 70,000 or 120000 for another location" }))).rejects.toThrow(/not supported/);
+  it("I1 records a legacy fixed-pay rejection backed by an unparsed higher alternative as the model's own", async () => {
+    const pay = { match: false, lane: null, hard_exclude: "3", reason: "Unsupported ceiling." };
+    expect(await filterJob(await configured({}, pay), completePosting({ compensation: "Annual base salary USD 70,000 or 120000 for another location" }))).toEqual({ state: "no_match", verdict: pay, gaps: [] });
   });
-  it.each(["full-time", null])("I2 holds mixed role employment with structured %s", async employmentType => {
-    await expect(filterJob(await configured(), completePosting({ employmentType, description: "Lead operations. This role is full-time or contract employment." }))).rejects.toThrow(/Employment.*review/);
+  it.each(["full-time", null])("I2 reviews mixed role employment with structured %s", async employmentType => {
+    expect(await filterJob(await configured(), completePosting({ employmentType, description: "Lead operations. This role is full-time or contract employment." }))).toMatchObject({ state: "needs_review", gaps: [{ field: "employment" }] });
   });
   it("I2 retains absence versus incidental employment language", async () => {
-    expect(await filterJob(await configured(), completePosting({ description: "Lead operations. This role coordinates projects and contract negotiations." }))).toMatchObject({ match: true });
+    expect(await filterJob(await configured(), completePosting({ description: "Lead operations. This role coordinates projects and contract negotiations." }))).toMatchObject({ state: "match" });
   });
   it.each(["allow", "review", "exclude_active"] as const)("I3 handles mandatory conjunctive clearance under %s", async clearance => {
-    const result = filterJob(await configured({ clearance }), completePosting({ description: "Lead operations. Must already hold active clearance at application and be eligible to obtain additional clearance after starting." }));
-    if (clearance === "review") await expect(result).rejects.toThrow(/review/);
-    else expect(await result).toMatchObject(clearance === "allow" ? { match: true } : { match: false, hard_exclude: "2" });
+    const result = await filterJob(await configured({ clearance }), completePosting({ description: "Lead operations. Must already hold active clearance at application and be eligible to obtain additional clearance after starting." }));
+    if (clearance === "review") expect(result).toMatchObject({ state: "needs_review", gaps: [{ field: "clearance" }] });
+    else expect(result).toMatchObject(clearance === "allow" ? { state: "match" } : { verdict: { match: false, hard_exclude: "2" } });
   });
-  it("I3 holds a disjunctive clearance alternative instead of requiring the active option", async () => {
-    await expect(filterJob(await configured({ clearance: "exclude_active" }), completePosting({ description: "Lead operations. Must already hold active clearance at application or be eligible to obtain clearance after starting." }))).rejects.toThrow(/timing.*review/);
+  it("I3 reviews a disjunctive clearance alternative instead of requiring the active option", async () => {
+    expect(await filterJob(await configured({ clearance: "exclude_active" }), completePosting({ description: "Lead operations. Must already hold active clearance at application or be eligible to obtain clearance after starting." }))).toMatchObject({ state: "needs_review", gaps: [{ field: "clearance" }] });
   });
   it.each(["onsite", "hybrid", ""])("I4 prevents a body-only %s office from satisfying remote-only policy", async arrangement => {
     const location = { ...CHICAGO_OPERATIONS.policy.location, allowOnsite: false, allowHybrid: false };
-    const result = filterJob(await configured({ location }), completePosting({ location: "Unknown", description: `Lead operations. This ${arrangement ? `${arrangement} ` : ""}role is based in our Chicago, IL office.` }));
-    if (arrangement) expect(await result).toMatchObject({ match: false, hard_exclude: "4" });
-    else await expect(result).rejects.toThrow(/arrangement.*unknown/);
+    const result = await filterJob(await configured({ location }), completePosting({ location: "Unknown", description: `Lead operations. This ${arrangement ? `${arrangement} ` : ""}role is based in our Chicago, IL office.` }));
+    if (arrangement) expect(result).toMatchObject({ verdict: { match: false, hard_exclude: "4" } });
+    else expect(result).toMatchObject({ state: "needs_review", gaps: [{ field: "location" }] });
   });
   it("I4 holds evidence-mode match on a disallowed body office with exact role evidence", async () => {
     const env = await configured({ location: { ...CHICAGO_OPERATIONS.policy.location, allowOnsite: false, allowHybrid: false } });
@@ -93,22 +94,25 @@ describe("review repairs at the legacy and evidence model boundary", () => {
     expect(result.decision.evidence.every(f => f.snapshotId === result.snapshot.id)).toBe(true);
   });
   it("M1 rejects a concrete outside-commute office even when the state matches", async () => {
-    expect(await filterJob(await configured(), completePosting({ location: "Springfield, IL", locationMetadata: { workplaceType: "OnSite", secondaryLocations: [], coverageGaps: [], sourceFields: ["synthetic"] } }))).toMatchObject({ match: false, hard_exclude: "4" });
+    expect(await filterJob(await configured(), completePosting({ location: "Springfield, IL", locationMetadata: { workplaceType: "OnSite", secondaryLocations: [], coverageGaps: [], sourceFields: ["synthetic"] } }))).toMatchObject({ verdict: { match: false, hard_exclude: "4" } });
   });
-  it.each(["This role is full-time or seasonal employment.", "This role has a contract arrangement.", "This role follows an unusual employment arrangement."])("round2 I2/N1 holds role-employment uncertainty through legacy screening: %s", assertion => {
+  it.each(["This role is full-time or seasonal employment.", "This role has a contract arrangement.", "This role follows an unusual employment arrangement."])("round2 I2/N1 reviews role-employment uncertainty through legacy screening: %s", assertion => {
     return configured().then(async env => {
-      await expect(filterJob(env, completePosting({ description: `Lead operations. ${assertion}` }))).rejects.toThrow(/Employment.*review/);
+      expect(await filterJob(env, completePosting({ description: `Lead operations. ${assertion}` }))).toMatchObject({ state: "needs_review", gaps: [{ field: "employment" }] });
     });
   });
-  it.each([true, false])("round2 N2 holds onsite/remote alternatives when the legacy model says match=%s", async match => {
-    const env = await configured({ location: { ...CHICAGO_OPERATIONS.policy.location, allowOnsite: false, allowHybrid: false } }, { match, lane: match ? "A" : null, hard_exclude: match ? null : "4", reason: "Synthetic proposal." });
+  it.each([true, false])("round2 N2 settles onsite/remote alternatives when the legacy model says match=%s", async match => {
+    const verdict = { match, lane: match ? "A" as const : null, hard_exclude: match ? null : "4", reason: "Synthetic proposal." };
+    const env = await configured({ location: { ...CHICAGO_OPERATIONS.policy.location, allowOnsite: false, allowHybrid: false } }, verdict);
     const job = completePosting({ location: "Unknown", description: "Lead operations. This role is onsite in our Chicago, IL office or fully remote within the US." });
-    await expect(filterJob(env, job)).rejects.toThrow(match ? /alternatives/ : /not established/);
+    // A possible match with unsettled alternatives is reviewed; the model's own location exclusion is recorded.
+    expect(await filterJob(env, job)).toEqual(match ? { state: "needs_review", verdict, gaps: [{ field: "location", reason: expect.stringMatching(/alternatives/) }] } : { state: "no_match", verdict, gaps: [] });
   });
-  it.each([true, false])("round2 N3 holds conflicting clearance when the legacy model says match=%s", async match => {
-    const env = await configured({ clearance: "exclude_active" }, { match, lane: match ? "A" : null, hard_exclude: match ? null : "2", reason: "Synthetic proposal." });
+  it.each([true, false])("round2 N3 settles conflicting clearance when the legacy model says match=%s", async match => {
+    const verdict = { match, lane: match ? "A" as const : null, hard_exclude: match ? null : "2", reason: "Synthetic proposal." };
+    const env = await configured({ clearance: "exclude_active" }, verdict);
     const job = completePosting({ description: "Lead operations. Must already hold active clearance at application, but active clearance is not required at application." });
-    await expect(filterJob(env, job)).rejects.toThrow(match ? /review/ : /not supported/);
+    expect(await filterJob(env, job)).toEqual(match ? { state: "needs_review", verdict, gaps: [{ field: "clearance", reason: expect.any(String) }] } : { state: "no_match", verdict, gaps: [] });
   });
   it.each(["This role is full-time or seasonal employment.", "This role has a contract arrangement.", "This role follows an unusual employment arrangement."])("round2 I2/N1 holds the evidence-model positive with an allowed fragment: %s", async assertion => {
     const env = await configured();

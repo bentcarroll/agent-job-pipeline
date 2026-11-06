@@ -9,7 +9,7 @@ import type { Verdict } from "./criteria";
 import { evaluateJob } from "./screening/evaluate";
 import type { ScreeningResult, ScreeningState } from "./screening/types";
 
-type PreviewRow = { id: string; url: string; status: "fetched" | "closed" | "retry"; job?: NormalizedJob; verdict?: Verdict; screening?: ScreeningResult; error?: string; evaluationError?: string };
+type PreviewRow = { id: string; url: string; status: "fetched" | "closed" | "retry"; job?: NormalizedJob; verdict?: Verdict; reviewGaps?: string[]; screening?: ScreeningResult; error?: string; evaluationError?: string };
 export interface PreviewOptions {
   runtime: RuntimeConfig;
   urls?: string[];
@@ -70,9 +70,11 @@ export async function previewDiscovery(options: PreviewOptions) {
             row.evaluationError = row.screening.decision.reason;
           }
         } else {
-          row.verdict = await filterJob(evaluate, row.job!);
-          counts.screening![row.verdict.match ? "match" : "no_match"]++;
-          if (row.verdict.match) counts.matches!++;
+          const screened = await filterJob(evaluate, row.job!);
+          row.verdict = screened.verdict;
+          if (screened.state === "needs_review") row.reviewGaps = screened.gaps.map(gap => gap.reason);
+          counts.screening![screened.state]++;
+          if (screened.state === "match") counts.matches!++;
         }
         counts.evaluated++;
       } catch (error) {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase, loadSchema } from "./harness";
-import { acceptIntake, claimAndSaveJob, readIntake } from "../../src/intake/store";
+import { acceptIntake, claimAndSaveJob, readAdvisory, readIntake, saveAdvisory } from "../../src/intake/store";
 import type { Admission } from "../../src/intake/types";
 import type { NormalizedJob } from "../../src/sources";
 import type { ResolutionResult } from "../../src/discovery/types";
@@ -208,5 +208,24 @@ describe("durable manual intake store", () => {
     expect((await claimAndSaveJob(db,input.id,0,posting(),at,proof)).kind).toBe("owned");
     expect(await db.prepare("SELECT owner_job_id FROM discovery_job_aliases WHERE alias=?")
       .bind(url).first()).toEqual({owner_job_id:"lever:acme:abc"});
+  });
+
+  // A possible match the policy could not confirm travels to the card with its gaps.
+  it("carries advisory gaps from the screening step to the delivered card", async () => {
+    const { loadRuntimeConfig } = await import("../../src/config/candidate");
+    const { activateCandidateConfig } = await import("../../src/config/run-context");
+    const { claimManualDelivery } = await import("../../src/intake/delivery-store");
+    const { CHICAGO_OPERATIONS } = await import("../fixtures/candidates");
+    const runtime = await loadRuntimeConfig(CHICAGO_OPERATIONS);
+    await activateCandidateConfig(db, "example-instance", runtime, null);
+    const input = admission("7");
+    await acceptIntake(db, input);
+    await claimAndSaveJob(db, input.id, 0, posting(), at, undefined, runtime.criteriaVersion);
+    const fit = { match: true, lane: "A" as const, hard_exclude: null, reason: "Operations fit." };
+    const gaps = ["Lane A is limited to applied AI companies in your profile; this company's category is not verified."];
+    expect(await saveAdvisory(db, input.id, 0, fit, null, at, runtime.criteriaVersion, gaps)).toBe(true);
+    expect(await readAdvisory(db, input.id)).toEqual({ verdict: fit, failure: null, gaps });
+    const prepared = await claimManualDelivery(db, input.id, 0, at, "example-instance");
+    expect(prepared?.card).toMatchObject({ verdict: fit, advisoryError: null, gaps });
   });
 });

@@ -31,7 +31,6 @@ import { screeningHoldMessage, applicationIdentityHoldMessage } from "./screenin
 import { readDiscoveryApplicationState, reconcileDiscoveryHolds, actionableHoldErrors } from "./discovery/application-state";
 import { loadApplicationAwareNotifications } from "./discovery/application-notifications";
 import { splitSlackText } from "./slack-text";
-import { LocationEligibilityError } from "./location";
 import { jsonToStream, streamToJson } from "./step-stream";
 import type { FilterEnv } from "./filter";
 import { saveDiscoveryScreening, recordDiscoveryFailure } from "./screening/workflow";
@@ -389,8 +388,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, {}> {
           if (e instanceof LeaseLostError) throw e;
           const error = `${job.id}: ${(e as Error).message}`;
           await recordDiscoveryFailure(env, db, lease, job.id, "filter", error, env.instance.instanceId);
-          return { ok: false as const, error, failureStage: "screen" as const,
-            failureCode: e instanceof LocationEligibilityError ? "location_review" : "provider_error" };
+          return { ok: false as const, error, failureStage: "screen" as const, failureCode: "provider_error" };
         }
       }, evidenceMode ? error => recordDiscoveryFailure(env, db, lease, job.id, "filter", error, env.instance.instanceId) : undefined);
       // Reconstruct counts outside callbacks: completed steps replay cached
@@ -490,7 +488,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, {}> {
 
     // Driven by what D1 says is undelivered rather than by this run's
     // matches, so an earlier run's undelivered backlog goes out too.
-    const applicationPlan = await loadApplicationAwareNotifications(step, db, "fixed_board", MAX_NOTIFICATIONS_PER_RUN, evidenceMode, sources, env.instance.instanceId, env.runtime);
+    const applicationPlan = await loadApplicationAwareNotifications(step, db, "fixed_board", MAX_NOTIFICATIONS_PER_RUN, sources, env.instance.instanceId, env.runtime);
     const candidates = applicationPlan.candidates;
     const locationPlan = await prepareLocationNotifications(step, db, lease, applicationPlan.ready, sources, env.runtime.candidate.policy, currentJobs);
     const pending = locationPlan.ready;
@@ -511,7 +509,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, {}> {
       const header = boardDigestMessage({
         delivering: eligiblePending.length,
         matchedThisRun: matches,
-        ...(evidenceMode ? { deliveringReviews: eligiblePending.filter(item => item.decision?.state === "needs_review").length, needsReviewThisRun: needsReview } : {}),
+        deliveringReviews: eligiblePending.filter(item => item.decision?.state === "needs_review").length,
+        needsReviewThisRun: needsReview,
         checked,
         alreadyApplied: plan.alreadyApplied,
         fetchErrors: errors,
@@ -537,7 +536,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, {}> {
       const { job, verdict, decision, evaluationId } = pending[i];
       const notificationId = evaluationId ?? job.id;
       const sent = await step.do(`notify:${notificationId}`, async () => {
-        const stillPending = isCurrentCriteria(pending[i].criteriaVersion, env.runtime) && (evidenceMode
+        // A legacy needs_review is stored as an evaluation, so the delivery
+        // receipt follows the row shape rather than the screening mode.
+        const stillPending = isCurrentCriteria(pending[i].criteriaVersion, env.runtime) && (evaluationId
           ? await isScreeningNotificationPending(db, job.id, evaluationId, lease.pipeline, env.instance.instanceId, env.runtime.criteriaVersion)
           : await isLegacyNotificationPending(db, job.id, lease.pipeline, env.instance.instanceId, env.runtime.criteriaVersion));
         if (!stillPending || !isLocationNotificationReady(pending[i], env.runtime.candidate.policy)) return false;
@@ -546,7 +547,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, {}> {
         await postMatch(env, job, verdict, undefined, decision);
         // Receipt storage remains in the delivery step so a failed write is
         // retried. This retains the existing at-least-once Slack boundary.
-        if (evidenceMode) await markScreeningNotified(db, job.id, evaluationId, new Date().toISOString(), lease);
+        if (evaluationId) await markScreeningNotified(db, job.id, evaluationId, new Date().toISOString(), lease);
         else await markNotified(db, [job.id], new Date().toISOString(), lease);
         await clearFailures(db, lease, [job.id]);
         return true;

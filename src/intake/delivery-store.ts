@@ -1,7 +1,7 @@
 import { isActiveCriteria } from "../config/run-context";
 import type { NormalizedJob } from "../sources";
 import type { ManualCard, SendOutcome } from "./types";
-type AdvisoryRecord = { verdict: ManualCard["verdict"]; failure: string | null };
+type AdvisoryRecord = { verdict: ManualCard["verdict"]; failure: string | null; gaps?: string[] };
 
 function when(value: string): number {
   const ms = Date.parse(value);
@@ -32,7 +32,7 @@ export async function readManualCardForDelivery(db: D1Database, deliveryId: stri
   try { advisory = row.advisory_json ? JSON.parse(row.advisory_json) as AdvisoryRecord : null; }
   catch { return null; }
   return { requestId: row.id, job, userId: row.user_id, selectedAt: row.created_at,
-    verdict: advisory?.verdict ?? null, advisoryError: advisory?.failure ?? null };
+    verdict: advisory?.verdict ?? null, advisoryError: advisory?.failure ?? null, gaps: advisory?.gaps ?? [] };
 }
 
 export async function isManualDeliveryCurrent(db: D1Database, deliveryId: string,
@@ -182,7 +182,7 @@ export async function claimManualDelivery(db: D1Database, requestId: string,
   catch { /* Sending claim is durable; expose unavailable advisory. */ }
   return { deliveryId, card: { requestId, job, verdict: advisory?.verdict ?? null,
     userId: request.user_id, selectedAt: request.created_at,
-    advisoryError: advisory?.failure ?? null } };
+    advisoryError: advisory?.failure ?? null, gaps: advisory?.gaps ?? [] } };
 }
 
 export async function cancelManualDelivery(db: D1Database, deliveryId: string,

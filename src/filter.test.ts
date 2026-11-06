@@ -30,9 +30,10 @@ describe("synthetic model response regressions", () => {
     await expect(filterJob(await env(run), completePosting())).rejects.toThrow();
     expect(run).toHaveBeenCalledTimes(2);
   });
-  it("requires complete posting context for a no-function-fit decision", async () => {
-    const run = async () => response(JSON.stringify({match:false,lane:null,hard_exclude:null,reason:"No function fit"}));
-    await expect(filterJob(await env(run), completePosting({description:null}))).rejects.toThrow(/context|review/);
+  it("records a no-function-fit decision on an incomplete posting instead of retrying it", async () => {
+    const noFit = {match:false,lane:null,hard_exclude:null,reason:"No function fit"};
+    const run = async () => response(JSON.stringify(noFit));
+    expect(await filterJob(await env(run), completePosting({description:null}))).toEqual({ state: "no_match", verdict: noFit, gaps: [] });
   });
   it("normalizes the provider's literal null only in the binary contract", () => {
     expect(parseVerdict(JSON.stringify({ ...positive, hard_exclude: "null" }))).toEqual(positive);
@@ -44,7 +45,7 @@ describe("synthetic model response regressions", () => {
   });
   it("resamples truncated output and recovers a complete decision", async () => {
     const run = vi.fn().mockResolvedValueOnce({ choices: [{ message: {}, finish_reason: "length" }], usage: { completion_tokens: 4000 } }).mockResolvedValueOnce(response(JSON.stringify(positive)));
-    expect(await filterJob(await env(run), completePosting())).toEqual(positive);
+    expect(await filterJob(await env(run), completePosting())).toEqual({ state: "match", verdict: positive, gaps: [] });
     expect(run).toHaveBeenCalledTimes(2);
     expect(telemetry).toHaveLength(2);
     expect(run.mock.calls[0][0]).toBe("@cf/zai-org/glm-5.3-flash");

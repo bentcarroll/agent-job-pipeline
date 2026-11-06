@@ -91,8 +91,91 @@ describe("review repair I1 fixed amount completeness", () => {
 describe("round2 N3 whole-posting clearance contradiction", () => {
   it.each(["Must already hold active clearance at application, but active clearance is not required at application.", "Must already hold active clearance at application. No active clearance is required at application.", "Must already hold active clearance at application. No clearance is required for this role."])("holds conflicting requirements instead of creating a firm exclusion: %s", description => {
     return import("../../src/config/policy").then(({ enforcePolicyVerdict }) => {
-      expect(() => enforcePolicyVerdict(completePosting({ description }), { match: true, lane: "A", hard_exclude: null, reason: "Synthetic proposal." }, { ...CHICAGO_OPERATIONS.policy, clearance: "exclude_active" }, "applied AI")).toThrow(/review/);
+      const proposal = { match: true, lane: "A" as const, hard_exclude: null, reason: "Synthetic proposal." };
+      expect(enforcePolicyVerdict(completePosting({ description }), proposal, { ...CHICAGO_OPERATIONS.policy, clearance: "exclude_active" }, "applied AI"))
+        .toEqual({ state: "needs_review", verdict: proposal, gaps: [{ field: "clearance", reason: expect.stringMatching(/clearance/i) }] });
     });
+  });
+});
+
+// Found in the first live install: the guard threw on every verdict it could
+// not confirm, and each one re-screened every six to forty-eight hours for
+// ever. A legacy verdict is now always settled: rejections are recorded as the
+// model gave them, and a match the policy cannot confirm is recorded as
+// needs_review with the gaps named for the card.
+describe("legacy screening settles every model verdict instead of retrying it", () => {
+  const policy = CHICAGO_OPERATIONS.policy;
+  const fit = { match: true, lane: "A" as const, hard_exclude: null, reason: "Operations fit." };
+  const settle = async (...args: Parameters<typeof import("../../src/screening/legacy").settleVerdict>) => (await import("../../src/screening/legacy")).settleVerdict(...args);
+
+  it("keeps a fully supported match settled", async () => {
+    expect(await settle(completePosting(), fit, policy, "applied AI")).toEqual({ state: "match", verdict: fit, gaps: [] });
+  });
+  it("records a match whose employment is stated ambiguously as needs_review", async () => {
+    const job = completePosting({ description: "Lead operations. This role is full-time or contract employment." });
+    expect(await settle(job, fit, policy, "applied AI")).toEqual({ state: "needs_review", verdict: fit, gaps: [{ field: "employment", reason: expect.stringMatching(/full-time/) }] });
+  });
+  it("accepts a match whose employment type is simply not stated", async () => {
+    const job = completePosting({ employmentType: null, description: "Lead operations and improve workflows." });
+    expect(await settle(job, fit, policy, "applied AI")).toEqual({ state: "match", verdict: fit, gaps: [] });
+  });
+  it("records a match in a category-restricted lane without a verified category as needs_review", async () => {
+    expect(await settle(completePosting(), fit, policy)).toEqual({ state: "needs_review", verdict: fit, gaps: [{ field: "company_category", reason: expect.stringMatching(/applied AI/) }] });
+  });
+  it("records a match in a lane the profile does not define as needs_review", async () => {
+    const proposal = { ...fit, lane: "B" as const };
+    expect(await settle(completePosting(), proposal, policy, "applied AI")).toEqual({ state: "needs_review", verdict: proposal, gaps: [{ field: "function", reason: expect.stringMatching(/lane B/i) }] });
+  });
+  it("records ambiguous or review-mode clearance as needs_review", async () => {
+    const ambiguous = completePosting({ description: "Lead operations. Must already hold active clearance at application or be eligible to obtain clearance after starting." });
+    expect((await settle(ambiguous, fit, { ...policy, clearance: "exclude_active" }, "applied AI")).gaps).toEqual([{ field: "clearance", reason: expect.stringMatching(/clearance/i) }]);
+    const active = completePosting({ description: "Lead operations. Must already hold active clearance at application." });
+    expect((await settle(active, fit, policy, "applied AI")).gaps).toEqual([{ field: "clearance", reason: expect.stringMatching(/active/i) }]);
+  });
+  it("records a location the policy cannot settle as needs_review", async () => {
+    const remoteOnly = { ...policy, location: { ...policy.location, allowOnsite: false, allowHybrid: false } };
+    const job = completePosting({ location: "Unknown", description: "Lead operations. This role is based in our Chicago, IL office." });
+    expect(await settle(job, fit, remoteOnly, "applied AI")).toEqual({ state: "needs_review", verdict: fit, gaps: [{ field: "location", reason: expect.any(String) }] });
+  });
+  it("collects policy and location gaps on one card", async () => {
+    const remoteOnly = { ...policy, location: { ...policy.location, allowOnsite: false, allowHybrid: false } };
+    const job = completePosting({ location: "Unknown", description: "Lead operations. This role is full-time or contract employment. This role is based in our Chicago, IL office." });
+    expect((await settle(job, fit, remoteOnly, "applied AI")).gaps.map(gap => gap.field)).toEqual(["employment", "location"]);
+  });
+  it("lets a location rejection outrank a policy review", async () => {
+    const job = completePosting({ location: "Springfield, IL", locationMetadata: { workplaceType: "OnSite", secondaryLocations: [], coverageGaps: [], sourceFields: ["synthetic"] }, description: "Lead operations. This role is full-time or contract employment." });
+    expect(await settle(job, fit, policy, "applied AI")).toEqual({ state: "no_match", verdict: { match: false, lane: null, hard_exclude: "4", reason: expect.any(String) }, gaps: [] });
+  });
+  it("still rejects a disclosed excluded arrangement, active clearance and below-floor pay deterministically", async () => {
+    expect((await settle(completePosting({ employmentType: "contract" }), fit, policy, "applied AI")).verdict).toMatchObject({ match: false, hard_exclude: "1" });
+    expect((await settle(completePosting({ description: "Lead operations. Must already hold active clearance at application." }), fit, { ...policy, clearance: "exclude_active" }, "applied AI")).verdict).toMatchObject({ match: false, hard_exclude: "2" });
+    expect((await settle(completePosting({ compensation: "Annual base salary USD 70,000 - USD 90,000" }), fit, policy, "applied AI")).verdict).toMatchObject({ match: false, hard_exclude: "3" });
+  });
+  it("records a no-function-fit verdict on a truncated posting as the model's no_match", async () => {
+    const noFit = { match: false, lane: null, hard_exclude: null, reason: "Sales role." };
+    const job = completePosting();
+    job.contentProvenance!.description.truncated = true;
+    expect(await settle(job, noFit, policy, "applied AI")).toEqual({ state: "no_match", verdict: noFit, gaps: [] });
+    expect(await settle(completePosting({ description: null }), noFit, policy, "applied AI")).toEqual({ state: "no_match", verdict: noFit, gaps: [] });
+  });
+  it("records a model hard exclusion the policy cannot verify as the model's no_match", async () => {
+    const pay = { match: false, lane: null, hard_exclude: "3", reason: "Pay is below the floor." };
+    expect(await settle(completePosting({ compensation: "Annual base salary USD 110,000 - USD 120,000" }), pay, policy, "applied AI")).toEqual({ state: "no_match", verdict: pay, gaps: [] });
+    const location = { match: false, lane: null, hard_exclude: "4", reason: "Not in the area." };
+    expect(await settle(completePosting(), location, policy, "applied AI")).toEqual({ state: "no_match", verdict: location, gaps: [] });
+  });
+});
+
+describe("employment statements distinguish absent from unresolved", () => {
+  it.each([
+    [completePosting({ employmentType: null, description: "Lead operations and improve workflows." }), "unstated"],
+    [completePosting({ employmentType: null, description: "Lead operations. This role is full-time or contract employment." }), "unknown"],
+    [completePosting({ employmentType: "contract or full-time" }), "unknown"],
+    [completePosting({ employmentType: "full-time" }), "allowed"],
+    [completePosting({ employmentType: "contract" }), "excluded"],
+  ])("classifies %o as %s", async (job, expected) => {
+    const { postingEmployment } = await import("../../src/config/policy");
+    expect(postingEmployment(job, CHICAGO_OPERATIONS.policy)).toBe(expected);
   });
 });
 
