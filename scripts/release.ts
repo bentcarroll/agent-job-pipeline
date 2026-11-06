@@ -19,7 +19,7 @@ export type Candidate = {
     schemaVersion: 2;
     channel: 'stable' | 'beta';
     version: string;
-    repository: 'bentcarroll-cmyk/agent-job-pipeline';
+    repository: 'bentcarroll/agent-job-pipeline';
     // The published release this one follows; null for the first release.
     previousRelease: { version: string; sha: string } | null;
     candidateSha: string;
@@ -160,7 +160,7 @@ export async function prepare(args: {
         const ancestors = git(root, 'rev-list', '--reverse', parent).split('\n');
         const tracked = git(root, 'for-each-ref', '--format=%(objectname)', 'refs/remotes/origin/main');
         if (tracked && tracked !== parent && tracked !== state.candidateSha) fail('PREDECESSOR_BINDING_INVALID');
-        if (previous.channel !== channel || previous.version !== version || previous.schemaVersion !== 2 || !('previousRelease' in previous) || previous.repository !== 'bentcarroll-cmyk/agent-job-pipeline' || previous.candidateSha !== parent || previous.rootSha !== state.rootSha || previous.lineageSha256 !== sha256(JSON.stringify(ancestors)) || previous.treeSha !== git(root, 'rev-parse', `${parent}^{tree}`) || previous.manifestSha256 !== sha256(execFileSync('git', ['-C', root, 'show', `${parent}:.release/public-manifest.json`]))) fail('PREDECESSOR_BINDING_INVALID');
+        if (previous.channel !== channel || previous.version !== version || previous.schemaVersion !== 2 || !('previousRelease' in previous) || previous.repository !== 'bentcarroll/agent-job-pipeline' || previous.candidateSha !== parent || previous.rootSha !== state.rootSha || previous.lineageSha256 !== sha256(JSON.stringify(ancestors)) || previous.treeSha !== git(root, 'rev-parse', `${parent}^{tree}`) || previous.manifestSha256 !== sha256(execFileSync('git', ['-C', root, 'show', `${parent}:.release/public-manifest.json`]))) fail('PREDECESSOR_BINDING_INVALID');
         assertPackageVersion(root, previous.version, parent);
         // A correction keeps the release its predecessor follows.
         if (previous.previousRelease !== null) previousRelease = bindPreviousRelease(root, previous.previousRelease, version, state.candidateSha);
@@ -177,7 +177,7 @@ export async function prepare(args: {
     if (!(await verifyRelease(archive.archive)).passed)
         fail('ARCHIVE_VERIFICATION_FAILED');
     const hash = async (p: string) => sha256(await readFile(join(root, p)));
-    const candidate: Candidate = { schemaVersion: 2, channel, version, repository: 'bentcarroll-cmyk/agent-job-pipeline', previousRelease, ...state, parentReceiptSha256, archiveSha256: archive.sha256, installationResultsSha256: await hash('docs/installation-results.md'), releaseNotesSha256: await hash('docs/release-notes.md'), licenseSha256: await hash('LICENSE'), platforms: ['macos-arm64'], checks: evidence.checks };
+    const candidate: Candidate = { schemaVersion: 2, channel, version, repository: 'bentcarroll/agent-job-pipeline', previousRelease, ...state, parentReceiptSha256, archiveSha256: archive.sha256, installationResultsSha256: await hash('docs/installation-results.md'), releaseNotesSha256: await hash('docs/release-notes.md'), licenseSha256: await hash('LICENSE'), platforms: ['macos-arm64'], checks: evidence.checks };
     await writeFile(join(output, 'candidate.json'), JSON.stringify(candidate, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     return candidate;
 }
@@ -191,7 +191,7 @@ export async function assertPublishable(args: {
     const approval = JSON.parse(await readFile(args.approval, 'utf8'));
     if (approval.schemaVersion !== 1 || approval.approved !== true || approval.candidateReceiptSha256 !== sha256(bytes) || !Number.isFinite(Date.parse(approval.reviewedAt)))
         fail('CANDIDATE_REVIEW_STALE');
-    if (c.schemaVersion !== 2 || !['stable', 'beta'].includes(c.channel) || typeof c.version !== 'string' || !VERSION.test(c.version) || channelOf(c.version) !== c.channel || !('previousRelease' in c) || c.repository !== 'bentcarroll-cmyk/agent-job-pipeline' || !hex(c.candidateSha, 40) || JSON.stringify(c.platforms) !== JSON.stringify(['macos-arm64']))
+    if (c.schemaVersion !== 2 || !['stable', 'beta'].includes(c.channel) || typeof c.version !== 'string' || !VERSION.test(c.version) || channelOf(c.version) !== c.channel || !('previousRelease' in c) || c.repository !== 'bentcarroll/agent-job-pipeline' || !hex(c.candidateSha, 40) || JSON.stringify(c.platforms) !== JSON.stringify(['macos-arm64']))
         fail('CANDIDATE_RECEIPT_INVALID');
     if (git(args.root, 'rev-parse', 'HEAD') !== c.candidateSha)
         fail('CANDIDATE_MOVED');

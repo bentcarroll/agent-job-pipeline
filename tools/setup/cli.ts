@@ -102,6 +102,81 @@ export async function dryRunBuild(root: string, config: string, kind: string): P
         throw new SetupError('OFFLINE_BUILD_FAILED');
     }
 }
+/** Deploys one reviewed operational config with the selected account's explicit token. Returns Wrangler's output. */
+export async function wranglerDeploy(root: string, config: string, token: string): Promise<string> {
+    const env = await isolatedWranglerEnvironment(root, token);
+    const safeConfig = await setupPath(root, relative(join(root, '.setup'), config));
+    const envFile = await setupPath(root, 'wrangler.env');
+    await atomicPrivateWrite(root, envFile, '');
+    const cli = await setupPath(root, 'dependencies/node_modules/wrangler/bin/wrangler.js');
+    try {
+        // A hung upload must not hold the workspace lock indefinitely.
+        const { stdout } = await exec(process.execPath, [cli, 'deploy', '--config', safeConfig, '--env-file', envFile], { cwd: root, env, maxBuffer: 16 * 1024 * 1024, timeout: 10 * 60 * 1000 });
+        return String(stdout);
+    }
+    catch (e) {
+        // Only a recognised cause is named; provider output is never echoed.
+        const output = `${(e as { stdout?: unknown }).stdout ?? ''}\n${(e as { stderr?: unknown }).stderr ?? ''}`;
+        if (/workers\.dev subdomain/i.test(output))
+            throw new SetupError('WORKERS_DEV_SUBDOMAIN_REQUIRED');
+        throw new SetupError('DEPLOY_FAILED');
+    }
+}
+/** Hash of every file the release ships. An operational config's `main` points into this tree, so its bytes are what deploy bundles. */
+export async function releaseFingerprint(root = releaseRoot): Promise<string> {
+    const manifest = JSON.parse(await readFile(join(root, '.release/public-manifest.json'), 'utf8')) as { files: string[] };
+    const entries: [string, string][] = [];
+    for (const file of manifest.files)
+        entries.push([file, hashBytes(await readFile(join(root, file)))]);
+    return hashBytes(JSON.stringify(entries));
+}
+export type ActivationRecord = { schemaVersion: 1; instanceSha256: string; criteriaVersion: string; release: string; configs: Record<'fixed' | 'unbounded', string> };
+/** Written by reviewed activation beside the configs it emits, and checked by deploy. */
+export async function recordActivation(root: string, instance: InstanceConfig, criteriaVersion: string, texts: Record<'fixed' | 'unbounded', string>, release = releaseFingerprint): Promise<void> {
+    const record: ActivationRecord = { schemaVersion: 1, instanceSha256: hashBytes(JSON.stringify(instance)), criteriaVersion, release: await release(), configs: { fixed: hashBytes(texts.fixed), unbounded: hashBytes(texts.unbounded) } };
+    await atomicPrivateWrite(root, join(root, '.setup/activation.json'), JSON.stringify(record, null, 2) + '\n');
+}
+async function readOptional(path: string): Promise<string | null> {
+    try {
+        return await readFile(path, 'utf8');
+    }
+    catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT')
+            return null;
+        throw e;
+    }
+}
+export type DeployedWorkers = Record<'fixed' | 'unbounded', { name: string; url: string | null }>;
+/**
+ * Deploys exactly what reviewed activation emitted: fixed first, then unbounded.
+ * A config edited since, a changed instance or a different release tree stops with ACTIVATION_STALE.
+ */
+export async function deployWorkspace(root: string, instance: InstanceConfig, token: string, deploy = wranglerDeploy, release = releaseFingerprint): Promise<DeployedWorkers> {
+    const recorded = await readOptional(await setupPath(root, 'activation.json'));
+    if (recorded === null)
+        throw new SetupError('ACTIVATION_REQUIRED');
+    const record = JSON.parse(recorded) as ActivationRecord;
+    const configs = { fixed: '', unbounded: '' };
+    for (const kind of ['fixed', 'unbounded'] as const) {
+        configs[kind] = await setupPath(root, `generated/wrangler.${kind}.operational.toml`);
+        const text = await readOptional(configs[kind]);
+        if (text === null)
+            throw new SetupError('ACTIVATION_REQUIRED');
+        if (record.schemaVersion !== 1 || hashBytes(text) !== record.configs?.[kind])
+            throw new SetupError('ACTIVATION_STALE');
+    }
+    if (record.instanceSha256 !== hashBytes(JSON.stringify(instance)) || record.release !== await release())
+        throw new SetupError('ACTIVATION_STALE');
+    const workers = {} as DeployedWorkers;
+    for (const kind of ['fixed', 'unbounded'] as const) {
+        const output = await deploy(root, configs[kind], token);
+        const name = kind === 'fixed' ? instance.cloudflare.fixedWorkerName : instance.cloudflare.unboundedWorkerName;
+        const url = output.match(new RegExp(`https://${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.[a-z0-9-]+\\.workers\\.dev`, 'i'))?.[0] ?? null;
+        workers[kind] = { name, url };
+    }
+    await atomicPrivateWrite(root, join(root, '.setup/deployment.json'), JSON.stringify({ schemaVersion: 1, instanceSha256: hashBytes(JSON.stringify(instance)), deployedAt: new Date().toISOString(), workers }, null, 2) + '\n');
+    return workers;
+}
 export async function previewWorkspace(root: string, instance: InstanceConfig, runtime: RuntimeConfig, build = dryRunBuild) {
     const directory = await setupPath(root, 'generated', 'directory', true);
     for (const kind of ['fixed', 'unbounded'] as const) {
@@ -115,7 +190,7 @@ export async function previewWorkspace(root: string, instance: InstanceConfig, r
 }
 function parseArguments(argv: string[]) {
     const [command, ...flags] = argv;
-    if (!['check', 'status', 'resources', 'preview', 'activate'].includes(command))
+    if (!['check', 'status', 'resources', 'preview', 'activate', 'deploy'].includes(command))
         throw new SetupError('SETUP_COMMAND_REQUIRED');
     const args: Record<string, string> = {};
     for (let i = 0; i < flags.length; i += 2) {
@@ -146,8 +221,9 @@ export async function main(argv = process.argv.slice(2)): Promise<string> {
             throw new SetupError('INSTANCE_BINDING_TOO_LARGE');
         const fingerprint = hashBytes(JSON.stringify({ instance: raw, candidate: runtime.candidate }));
         const receipt = (stage: SetupStage, status: 'pending' | 'complete' | 'blocked', resourceIds: Record<string, string> = {}, errorCode: string | null = null) => saveLockedReceipt(workspace, { schemaVersion: 1, instanceId: raw.instanceId, stage, status, fingerprint, resourceIds, errorCode });
-        const stage: SetupStage = command === 'check' ? 'preflight' : command === 'activate' ? 'activation' : command as SetupStage;
+        const stage: SetupStage = command === 'check' ? 'preflight' : command === 'activate' ? 'activation' : command === 'deploy' ? 'deployment' : command as SetupStage;
         await receipt(stage, 'pending');
+        let deployed: DeployedWorkers | null = null;
         try {
             if (command === 'check') {
                 if (!args.python || !isAbsolute(args.python))
@@ -158,6 +234,9 @@ export async function main(argv = process.argv.slice(2)): Promise<string> {
                 await receipt('profile', 'complete');
             }
             else {
+                // Preview, activation and deployment bind the provisioned database, so `resources` comes first.
+                if (command !== 'resources' && raw.cloudflare.databaseId === null)
+                    throw new SetupError('RESOURCES_REQUIRED');
                 await probeDependencies(workspace, releaseRoot);
                 if (command === 'preview') {
                     await previewWorkspace(workspace, parseInstanceConfig(raw), runtime);
@@ -177,6 +256,14 @@ export async function main(argv = process.argv.slice(2)): Promise<string> {
                         await atomicPrivateWrite(workspace, instancePath, JSON.stringify(instance, null, 2) + '\n');
                         await receipt('accounts', 'complete');
                     }
+                    else if (command === 'deploy') {
+                        const instance = parseInstanceConfig(raw);
+                        await verifyResources(instance, adapter);
+                        // Only configs from a completed activation of these exact instance and candidate bytes deploy.
+                        if (!receipts.some(r => r.stage === 'activation' && r.status === 'complete' && r.fingerprint === fingerprint))
+                            throw new SetupError('ACTIVATION_REQUIRED');
+                        deployed = await deployWorkspace(workspace, instance, token);
+                    }
                     else {
                         const instance = parseInstanceConfig(raw);
                         const db = adapter.database(instance.cloudflare.databaseId, instance.cloudflare.accountId);
@@ -193,11 +280,14 @@ export async function main(argv = process.argv.slice(2)): Promise<string> {
                             throw new SetupError('PREVIEW_STALE');
                         const review = JSON.parse(await readFile(await privatePath(workspace, args.review), 'utf8')) as ActivationReview;
                         await activateReviewed(workspace, instance, runtime, adapter, db, review);
-                        // Reviewed operational configs emit approved dispatch ticks; deployment remains a separate action.
+                        // Reviewed operational configs emit approved dispatch ticks; deployment is the separate deploy stage.
+                        const texts = { fixed: '', unbounded: '' };
                         for (const kind of ['fixed', 'unbounded'] as const) {
                             const rendered = await renderConfig(instance, runtime.candidate, kind, join(releaseRoot, kind === 'fixed' ? 'src/index.ts' : 'src/unbounded/index.ts'), 'operational', await setupPath(workspace, 'dependencies/node_modules/@anthropic-ai/sdk/index.mjs'));
                             await atomicPrivateWrite(workspace, join(workspace, '.setup/generated', `wrangler.${kind}.operational.toml`), rendered.text);
+                            texts[kind] = rendered.text;
                         }
+                        await recordActivation(workspace, instance, runtime.criteriaVersion, texts);
                     }
                 }
             }
@@ -207,6 +297,8 @@ export async function main(argv = process.argv.slice(2)): Promise<string> {
             }
             catch { }
             await receipt(stage, 'complete', ids);
+            if (deployed)
+                return `deploy: complete (${deployed.unbounded.url ? `Slack and Google pages at ${deployed.unbounded.url}` : 'Wrangler reported no workers.dev URL; read it from the Worker in the Cloudflare dashboard'})`;
             return `${command}: complete${command === 'preview' ? ' (offline profile and build checks; no live preview)' : ''}`;
         }
         catch (e) {

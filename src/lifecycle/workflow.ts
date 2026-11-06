@@ -7,9 +7,9 @@ import { postText, type SlackEnv } from "../slack";
 import { classifyEmail } from "./classify";
 import { getCheckpoint, handledIds, retryReceipts, setCheckpoint } from "./db";
 import type { EmailMeta } from "./evidence";
-import { buildSearchQuery, getAccessToken, getMessage, GmailAuthError, listMessageIds, type GmailEnv } from "./gmail-client";
+import { buildSearchQuery, getAccessToken, getMessage, GmailAuthError, GmailNotFoundError, listMessageIds, type GmailEnv } from "./gmail-client";
 import { parseMessage } from "./gmail-message";
-import { announce, decideAndRecord, type Classified } from "./record";
+import { announce, decideAndRecord, recordGone, type Classified } from "./record";
 
 export type LifecycleEnv = ConfigBindings & FilterEnv &
   SlackEnv &
@@ -59,11 +59,17 @@ export class LifecycleWorkflow extends WorkflowEntrypoint<LifecycleEnv, {}> {
     }
 
     const classified: Classified[] = [];
+    // Deleted from Gmail since they were listed or last tried.
+    const gone: Array<{ id: string; threadId: string }> = [];
     const tally: Record<string, number> = {};
     const saveCompleted = async () => {
       // Oldest first preserves the confirmation -> rejection sequence.
       for (const item of [...classified].sort((a, b) => a.email.date.localeCompare(b.email.date))) {
         const decision = await step.do(`decide:${item.id}`, async () => redactedOperation("Lifecycle receipt save", () => decideAndRecord(db, item, live, new Date().toISOString())));
+        tally[decision] = (tally[decision] ?? 0) + 1;
+      }
+      for (const m of gone) {
+        const decision = await step.do(`gone:${m.id}`, async () => redactedOperation("Lifecycle receipt save", () => recordGone(db, m, live, new Date().toISOString())));
         tally[decision] = (tally[decision] ?? 0) + 1;
       }
     };
@@ -99,10 +105,17 @@ export class LifecycleWorkflow extends WorkflowEntrypoint<LifecycleEnv, {}> {
             return { ok: true as const, email };
           } catch (e) {
             if (e instanceof GmailAuthError) return { ok: false as const };
+            // Caught here so the step doesn't retry a message that can't come
+            // back; it is settled with the completed receipts.
+            if (e instanceof GmailNotFoundError) return { ok: true as const, email: null };
             throw new Error("Gmail metadata read failed");
           }
         });
         if (!metadata.ok) throw new GmailAuthError();
+        if (!metadata.email) {
+          gone.push(m);
+          continue;
+        }
         const email = metadata.email;
         try {
           // The body is fetched and read inside this step only; its output is

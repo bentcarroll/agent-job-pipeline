@@ -21,7 +21,7 @@ const bindings = (mode = "live", selected = instance()) => ({ DB: db, CANDIDATE_
   LIFECYCLE_MODE: mode, LIFECYCLE_SINCE: "1990-01-01", SLACK_BOT_TOKEN: SECRET, SLACK_CHANNEL_ID: "CEXAMPLE123", AI_GATEWAY_ID: "synthetic",
   GMAIL_CLIENT_ID: "SYNTHETIC-CLIENT", GMAIL_CLIENT_SECRET: SECRET, GMAIL_REFRESH_TOKEN: SECRET,
   AI: { run: vi.fn().mockResolvedValue({ choices: [{ message: { tool_calls: [{ function: { arguments: '{"event":"application_confirmation","employer":"Synthetic Works","title":"Operations"}' } }] } }] }) } });
-function provider(fail: "auth" | "classify-auth" | "token-auth" | "network" | null = null) {
+function provider(fail: "auth" | "classify-auth" | "token-auth" | "network" | "gone" | null = null) {
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     if (url.hostname === "oauth2.googleapis.com") {
@@ -31,6 +31,8 @@ function provider(fail: "auth" | "classify-auth" | "token-auth" | "network" | nu
     if (url.hostname === "slack.com") { slack.push(JSON.parse(String(init?.body))); return Response.json({ ok: true, ts: "123.4" }); }
     if (url.pathname.endsWith("/messages")) { queries.push(url.searchParams.get("q")!); return Response.json({ messages: [{ id: "first", threadId: "thread-first" }, { id: "second", threadId: "thread-second" }] }); }
     const id = url.pathname.split("/").at(-1)!; reads.push(`${id}:${url.searchParams.get("format")}`);
+    // Deleted from the mailbox after it was listed: Gmail answers 404.
+    if (id === "second" && fail === "gone") return new Response(PRIVATE, { status: 404 });
     if (id === "second" && fail && fail !== "token-auth" && (fail !== "classify-auth" || url.searchParams.get("format") === "full")) {
       if (fail === "auth" || fail === "classify-auth") return new Response(PRIVATE + SECRET, { status: 401 });
       throw new Error(PRIVATE + SECRET);
@@ -247,6 +249,45 @@ describe("lifecycle interrupted batch recovery", () => {
     expect(reads).not.toContain("first:full"); expect(reads).toContain("second:full");
     expect(await getReceipt(db, "second")).toMatchObject({ decision: "unchanged" });
     expect(await getCheckpoint(db)).not.toBe("2026-02-02T00:00:00Z");
+  });
+  it("settles a message deleted from Gmail instead of failing the run", async () => {
+    provider("gone");
+    expect(await run()).toMatchObject({ found: 2, tally: { ignored: 1 } });
+    expect(await getReceipt(db, "first")).toMatchObject({ decision: "applied", test: 0 });
+    const gone = await getReceipt(db, "second");
+    expect(gone).toMatchObject({ decision: "ignored", test: 0 });
+    expect(gone!.evidence).toContain("deleted from Gmail");
+    expect(reads).not.toContain("second:full");
+    expect(await getCheckpoint(db)).not.toBeNull();
+    expect(JSON.stringify([outputs, failures, slack])).not.toContain(PRIVATE);
+    reads = []; provider("gone"); await run(bindings(), "after-gone");
+    expect(reads).not.toContain("second:metadata");
+  });
+  it("settles an earlier retry for a since-deleted message and keeps what that try read", async () => {
+    provider(); const env = bindings(); env.AI.run.mockRejectedValue(new Error("synthetic model outage"));
+    await run(env);
+    expect(await getReceipt(db, "second")).toMatchObject({ decision: "retry", attempts: 1 });
+    provider("gone"); await run(bindings(), "retry-gone");
+    const gone = await getReceipt(db, "second");
+    expect(gone).toMatchObject({ decision: "ignored", received_at: "2026-02-03T12:00:00.000Z", attempts: 1 });
+    expect(gone!.evidence).toContain("careers@syntheticworks.test · Application received");
+    expect(gone!.evidence).toContain("deleted from Gmail");
+  });
+  it("settles a preview receipt for a since-deleted message once the tracker goes live", async () => {
+    provider(); await run(bindings("test"));
+    expect(await getReceipt(db, "second")).toMatchObject({ test: 1 });
+    provider("gone"); await run(bindings(), "live-after-preview");
+    const gone = await getReceipt(db, "second");
+    expect(gone).toMatchObject({ decision: "ignored", test: 0, attempts: 0 });
+    expect(gone!.evidence.match(/deleted from Gmail/g)).toHaveLength(1);
+  });
+  it("settles a preview receipt that already recorded the deletion without repeating the note", async () => {
+    provider("gone"); await run(bindings("test"));
+    expect(await getReceipt(db, "second")).toMatchObject({ decision: "ignored", test: 1 });
+    provider("gone"); await run(bindings(), "live-after-gone-preview");
+    const gone = await getReceipt(db, "second");
+    expect(gone).toMatchObject({ decision: "ignored", test: 0 });
+    expect(gone!.evidence.match(/deleted from Gmail/g)).toHaveLength(1);
   });
   it("redacts arbitrary provider/network failure text and retains completed work", async () => {
     provider("network"); await expect(run()).rejects.toThrow("Application tracker run failed");

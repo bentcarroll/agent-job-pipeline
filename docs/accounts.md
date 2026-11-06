@@ -1,18 +1,34 @@
 # Your accounts and capabilities
 
-This is the `0.1.0-beta.2` evaluation beta. Local verification is scoped to macOS arm64. Full native installation and live discovery, Slack, Gmail and resource cleanup remain unverified; setup still requires your own selected accounts, credentials and consent. Beta publication does not establish successful hosted installation.
+This is the `0.1.0-beta.3` beta. Automated tests, the offline setup stages and materials rendering pass on macOS with Apple silicon; a from-scratch install on a new Cloudflare account and Slack workspace is still an open release check.
 
-Use accounts you control and select the exact destination before granting access. A coding-assistant subscription does not establish access or paid usage for the hosted services. Check current provider pricing, limits, available models and organization permissions in your own accounts before live deployment; offline builds do not prove them.
+Use accounts you control and select the exact destination before granting access. A coding-assistant subscription does not pay for the hosted services. Check current provider pricing, limits, available models and organization permissions in your own accounts before deploying; offline builds do not prove them.
+
+## What it costs
+
+Measured in October 2026 on the author's deployment of the private pipeline this release comes from, with about 5,000 postings screened, 6,600 web searches, and a daily tracker and radar run:
+
+| Service | Monthly cost at that volume |
+| --- | --- |
+| Cloudflare Workers Paid plan, including Workers AI screening and classification | $8 to $10 ($5 plan; the rest is model usage above the free daily allocation) |
+| Serper | about $7 in queries; sold in blocks (50,000 for $50, valid six months); 2,500 free at sign-up |
+| twitterapi.io and Anthropic (radar only) | about $4.50 of X data and $4 of Claude editor tokens |
+| Slack, Gmail API | free |
+| Materials | run in your Claude Code or Codex session, on your subscription |
+
+The Workers Paid plan is required because the screening model needs a paid account. Costs scale with search phrases, employer boards, run times and radar budget.
+
+## Services
 
 | Service | Used for | Required access and private credential handling |
 | --- | --- | --- |
-| Cloudflare | Workers, Workflows, D1 ledger, Workers AI screening/classification, AI Gateway | Selected account with these capabilities and permitted account operations. Setup uses explicitly supplied `CLOUDFLARE_API_TOKEN` for resource APIs. Runtime screening uses the `AI` binding, not an OpenAI/Anthropic API key. Keep generated resource IDs/ownership receipts in the private workspace. |
+| Cloudflare | Workers, Workflows, D1 ledger, Workers AI screening/classification, AI Gateway | Selected account on the Workers Paid plan. Setup uses an explicitly supplied `CLOUDFLARE_API_TOKEN`: start from the "Edit Cloudflare Workers" token template and add the account permissions D1 Edit and AI Gateway Edit, limited to the selected account. Runtime screening uses the `AI` binding, not an OpenAI or Anthropic key. Keep generated resource IDs and ownership receipts in the private workspace. |
 | Slack | Job review, durable manual intake, lifecycle summaries, optional radar digest | Operator-owned/authorized Slack app installation, bot invited to chosen channel, explicit allowed user ID. Runtime secrets: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`; bot posting/updating requires appropriate `chat:write` permission and slash commands require `commands`. Configure interactivity `/slack/actions` and slash-command `/slack/commands` URLs only after an authorized deployment provides the real endpoint. |
 | Serper | Open-web discovery | Own search-provider access and `SERPER_API_KEY` on the unbounded Worker. Current full workflow includes this discovery lane; fixed ATS discovery alone does not prove the full workflow. |
 | Google Cloud + selected Gmail account | Optional lifecycle reconciliation | Own project, enabled Gmail API, installed/Desktop OAuth client, actual Branding/Audience/Data Access mode and operator browser consent. Private client JSON plus three helper-stored Gmail secrets; read-only scope only. No Gmail credentials needed when lifecycle is disabled. |
 | twitterapi.io + Anthropic API | Optional AI radar only | Own X-data provider key `TWITTERAPI_IO_KEY` and Anthropic API access `ANTHROPIC_API_KEY` for the configured editor model, on the selected unbounded Worker. Disabled radar reads neither credential nor provider. The X budget covers metered estimated data requests, not Anthropic/Cloudflare/Slack charges. |
 
-`TRIGGER_SECRET` protects on-demand endpoints on both Workers. Store runtime secrets using the selected account's private credential UI or a verified redacted stdin sink bound to the exact generated worker/account; never put values in instance/candidate bindings, source, arguments, chat or receipts. Setup does not auto-upload ordinary runtime secrets. The Gmail helper separately uploads its three secrets through an isolated generated account/worker config, using only a privately supplied `CLOUDFLARE_API_TOKEN` authorized for that account. It preserves HOME and uses private config/log/cache/temp paths; missing token/capability or legacy `~/.wrangler` blocks before consent. Review account permissions before each authorized external operation; the `--provider-writes approved` flag is an operator acknowledgment, not credential validation or live acceptance.
+`TRIGGER_SECRET` protects on-demand endpoints on both Workers. Store runtime secrets using the selected account's private credential UI (the Worker's Variables and Secrets settings) or a verified redacted stdin sink bound to the exact generated worker/account; never put values in instance/candidate bindings, source, arguments, chat or receipts. Setup does not auto-upload ordinary runtime secrets; [SETUP.md](../SETUP.md) lists which Worker needs which secret. The Gmail helper separately uploads its three secrets through an isolated generated account/worker config, using only a privately supplied `CLOUDFLARE_API_TOKEN` authorized for that account. It preserves HOME and uses private config/log/cache/temp paths; missing token/capability or legacy `~/.wrangler` blocks before consent. Review account permissions before each authorized external operation; the `--provider-writes approved` flag is an operator acknowledgment, not credential validation or live acceptance.
 
 The unbounded Worker serves operator-specific home/privacy pages at `/` and `/privacy`; review processing and contact details before giving real hosted URLs to Google. Local pages and flags are not Google verification. Lifecycle mail is classified by Workers AI with Gateway `collectLog:false` and `skipCache:true`; bodies and credentials are excluded from durable step outputs and alerts. [Gmail setup and recovery](lifecycle-setup.md) describes Testing expiry, personal-use exception checks and partial secret-write recovery.
 

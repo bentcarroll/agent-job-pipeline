@@ -322,6 +322,27 @@ const metaOf = (r: ReceiptRow): EmailMeta => ({
   date: r.received_at,
 });
 
+export const GONE_NOTE = "deleted from Gmail before it could be read";
+
+// A message deleted from Gmail can never be read, so it settles as ignored
+// instead of returning as a retry on every run. A receipt from an earlier try
+// keeps its date, sender and subject.
+export async function recordGone(db: D1Database, m: { id: string; threadId: string }, live: boolean, now: string): Promise<string> {
+  const stored = await getReceipt(db, m.id);
+  const promotion = live && stored?.test === 1;
+  // The same dedupe as decideAndRecord: a settled receipt stands, preview
+  // never touches a live one, and live settles a preview receipt through the
+  // same eligibility-checked write, with a fresh attempt count.
+  if (stored && ((!live && stored.test === 0) || (!promotion && stored.decision !== "retry"))) return stored.decision;
+  const prior = promotion ? { ...stored!, attempts: 0, evidence: stored!.evidence.replace(` (${GONE_NOTE})`, "") } : stored;
+  const email: EmailMeta = prior ? metaOf(prior) : { id: m.id, threadId: m.threadId, from: "", subject: "", date: now };
+  const base = baseReceipt(email, prior, live, now);
+  const receipt: ReceiptRow = { ...base, evidence: `${base.evidence} (${GONE_NOTE})`, decision: "ignored" };
+  const saved = promotion ? await savePromotedReceipt(db, receipt, { statements: [], ownerInsertIndex: null }) : await saveReceipt(db, receipt);
+  if (saved) return "ignored";
+  return (await getReceipt(db, m.id))?.decision ?? "ignored";
+}
+
 export function summaryItems(receipts: ReceiptRow[]): { items: SummaryItem[]; questions: ReceiptRow[] } {
   const items: SummaryItem[] = [];
   const questions: ReceiptRow[] = [];

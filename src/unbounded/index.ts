@@ -75,6 +75,7 @@ import { prepareLocationNotifications, isLocationNotificationReady, locationHold
 import { startDiscoveryRun, recordStageOutcome, recordCreatedDeliveryIntent, recordDeliveryAttempt, finishDiscoveryRun, type Stage } from "../discovery/coverage";
 import { observeSearchPage } from "../discovery/observe";
 import { reconcileIncompleteRuns } from "../operations/run-health";
+import { secretsReady } from "../config/secrets";
 import { readDiscoveryReport } from "../operations/discovery-report";
 import { runExpandedSearch } from "../discovery/expanded-run";
 import { persistSearchPageHits } from "../discovery/queue-integration";
@@ -1137,14 +1138,15 @@ export default {
     const outcomes = await Promise.allSettled(dueWorkflows(new Date(event.scheduledTime), configured.instance.schedule).map(async slot => {
       const id = `${configured.instance.instanceId}-${slot.slotKey}`;
       if (slot.workflow === "lifecycle") {
-        if (configured.instance.lifecycle.enabled && configured.LIFECYCLE_MODE !== "off")
+        if (configured.instance.lifecycle.enabled && configured.LIFECYCLE_MODE !== "off" && secretsReady(env, "lifecycle"))
           await startScheduledWorkflow(env.LIFECYCLE_WORKFLOW, id);
       } else if (slot.workflow === "radar") {
-        if (configured.instance.radar.enabled) await startScheduledWorkflow(env.RADAR_WORKFLOW, id);
+        if (configured.instance.radar.enabled && secretsReady(env, "radar")) await startScheduledWorkflow(env.RADAR_WORKFLOW, id);
       } else if (slot.workflow === "intake") {
         if (!env.MANUAL_INTAKE_WORKFLOW) throw new Error("Missing manual intake Workflow binding");
         await reconcileIntakes(env.DB, workflowControl(env.MANUAL_INTAKE_WORKFLOW), event.scheduledTime);
       } else if (slot.workflow === "discovery") {
+        if (!secretsReady(env, "discovery")) return;
         if (env.DISCOVERY_ACCOUNTING_MODE === "on") {
           try { await reconcileIncompleteRuns(env.DB, "unbounded_discovery", env.AGENT_WORKFLOW); }
           catch (error) { console.error("Discovery health reconciliation failed", error); }

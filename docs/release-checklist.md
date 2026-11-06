@@ -54,7 +54,7 @@ git -C /absolute/public/root fetch --no-tags origin +refs/heads/main:refs/remote
 Read the earlier release's tagged commit from GitHub, not from a local guess:
 
 ```sh
-gh api repos/bentcarroll-cmyk/agent-job-pipeline/git/ref/tags/v0.1.0-beta.1 --jq .object.sha
+gh api repos/bentcarroll/agent-job-pipeline/git/ref/tags/v0.1.0-beta.1 --jq .object.sha
 ```
 
 Then name that release when preparing:

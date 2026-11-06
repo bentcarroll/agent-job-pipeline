@@ -7,7 +7,7 @@ import type {SetupReceipt} from './types';
 import {SetupError} from './types';
 function validateReceipt(value: SetupReceipt): void {
     if (value.schemaVersion !== 1 || !/^[-a-z0-9]{1,63}$/.test(value.instanceId) ||
-        !['preflight', 'workspace', 'profile', 'accounts', 'resources', 'preview', 'activation'].includes(value.stage) ||
+        !['preflight', 'workspace', 'profile', 'accounts', 'resources', 'preview', 'activation', 'deployment'].includes(value.stage) ||
         !['pending', 'complete', 'blocked'].includes(value.status) || !/^[a-f0-9]{64}$/.test(value.fingerprint) ||
         !value.resourceIds || Object.values(value.resourceIds).some(v => typeof v !== 'string') ||
         !(value.errorCode === null || /^[A-Z0-9_]+$/.test(value.errorCode)))

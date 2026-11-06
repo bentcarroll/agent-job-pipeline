@@ -108,8 +108,8 @@ const assets=()=>{
 const release=()=>({id:state.kind==='replaced-release'&&state.inventoryReads>=4?99:10,tag_name:state.version,name:state.version,prerelease:state.beta&&!(state.kind==='beta-created-stable'||(state.kind==='beta-late-stable'&&state.inventoryReads>=4)||(state.kind==='beta-final-stable'&&state.draft===false)),body:state.kind==='edited-notes'&&state.inventoryReads>=4?'UNREVIEWED prose':'synthetic content',draft:state.draft,html_url:'https://example.invalid/release/v0.1.0',assets:assets()});
 const unrelated=()=>({id:20,tag_name:'deleted-tag',draft:false,assets:[{name:'UNREVIEWED.txt',id:30}]});
 if(a[0]==='api'){
- const q=a[1],base='repos/bentcarroll-cmyk/agent-job-pipeline';
- if(q===base)result={full_name:'bentcarroll-cmyk/agent-job-pipeline',private:state.private,default_branch:'main'};
+ const q=a[1],base='repos/bentcarroll/agent-job-pipeline';
+ if(q===base)result={full_name:'bentcarroll/agent-job-pipeline',private:state.private,default_branch:'main'};
  else if(q===base+'/git/ref/heads/main')result={object:{sha:state.sha}};
  else if(q.includes('/check-runs?'))result={total_count:1,check_runs:[{name:'macos-local-runtime',head_sha:state.sha,status:'completed',conclusion:'success',app:{slug:'github-actions'}}]};
  else if(q===base+'/git/matching-refs/')result=[{ref:'refs/heads/main',object:{type:'commit',sha:state.sha}},...(state.tagged?[{ref:'refs/tags/'+state.version,object:{type:'commit',sha:state.sha}}]:[]),...(state.extraRef?[{ref:'refs/heads/unreviewed',object:{type:'commit',sha:'b'.repeat(40)}}]:[])];
@@ -297,14 +297,14 @@ it.each(['clean', 'wrong-repo', 'private', 'missing-previous', 'draft-previous',
  await writeFile(join(bin, 'gh'), `#!/usr/bin/env node
 const fs=require('fs'),p=require('path'),dir=process.env.SYNTHETIC_GH_DIR;
 const path=p.join(dir,'remote.json'),state=JSON.parse(fs.readFileSync(path)),a=process.argv.slice(2);
-state.calls.push(a);let result=null;const base='repos/bentcarroll-cmyk/agent-job-pipeline';
+state.calls.push(a);let result=null;const base='repos/bentcarroll/agent-job-pipeline';
 const asset=(id,name)=>({id,name});
 const earlier=(tag,id)=>({id,tag_name:tag,name:tag,body:state.kind==='edited-previous'&&state.inventoryReads>=3?'UNREVIEWED prose':'Earlier notes',draft:state.kind==='draft-previous',prerelease:true,target_commitish:'main',html_url:'https://example.invalid/release/'+tag,...(state.kind==='unlisted-assets'?{}:{assets:[asset(id*10+1,'agent-job-pipeline.tar.gz'),asset(id*10+2,'agent-job-pipeline.tar.gz.sha256')]})});
 const mine=()=>({id:11,tag_name:state.version,name:state.version,body:'synthetic content',draft:state.draft,prerelease:true,target_commitish:state.sha,html_url:'https://example.invalid/release/'+state.version,assets:[asset(1,'agent-job-pipeline.tar.gz'),asset(2,'agent-job-pipeline.tar.gz.sha256')]});
 const tagSha=()=>state.kind==='moved-previous-tag'?state.sha:state.kind==='tag-off-lineage'?'d'.repeat(40):state.kind==='previous-tag-moves'&&state.inventoryReads>=2?state.middle:state.root;
 if(a[0]==='api'){
  const q=a[1];
- if(q===base)result={full_name:state.kind==='wrong-repo'?'someone/agent-job-pipeline':'bentcarroll-cmyk/agent-job-pipeline',private:state.private,default_branch:'main'};
+ if(q===base)result={full_name:state.kind==='wrong-repo'?'someone/agent-job-pipeline':'bentcarroll/agent-job-pipeline',private:state.private,default_branch:'main'};
  else if(q===base+'/releases?per_page=100'){state.inventoryReads++;result=[...(state.kind==='missing-previous'?[]:[earlier('v0.1.0-beta.1',5)]),...(state.kind==='existing-later-release'?[earlier('v0.1.0-beta.3',6)]:[]),...(state.kind==='newer-than-followed'?[earlier('v0.1.0-beta.2',6)]:[]),...(state.draft===null?[]:[mine()])];}
  else if(q===base+'/git/matching-refs/')result=[{ref:'refs/heads/main',object:{type:'commit',sha:state.sha}},{ref:state.kind==='unknown-ref'?'refs/tags/v0.0.1':'refs/tags/v0.1.0-beta.1',object:{type:'commit',sha:tagSha()}},...(state.kind==='existing-later-release'?[{ref:'refs/tags/v0.1.0-beta.3',object:{type:'commit',sha:state.root}}]:[]),...(state.tagged?[{ref:'refs/tags/'+state.version,object:{type:'commit',sha:state.sha}}]:[]),...(state.kind==='extra-tag'?[{ref:'refs/tags/unreviewed',object:{type:'commit',sha:state.root}}]:[])];
  else if(q===base+'/git/ref/heads/main')result={object:{sha:state.sha}};

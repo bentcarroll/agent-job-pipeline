@@ -1,4 +1,4 @@
-export type SetupStage = 'preflight' | 'workspace' | 'profile' | 'accounts' | 'resources' | 'preview' | 'activation';
+export type SetupStage = 'preflight' | 'workspace' | 'profile' | 'accounts' | 'resources' | 'preview' | 'activation' | 'deployment';
 export type SetupReceipt = {
     schemaVersion: 1;
     instanceId: string;

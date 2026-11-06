@@ -6,6 +6,12 @@ export class GmailAuthError extends Error {
   constructor() { super("Google sign-in expired, was revoked, or lacks read-only Gmail authorization"); }
 }
 
+// messages.get 404: the message was deleted after it was listed or last
+// tried, so no retry will ever read it.
+export class GmailNotFoundError extends Error {
+  constructor() { super("Gmail message no longer exists"); }
+}
+
 // No provider response bodies, transport errors or credentials escape this boundary.
 async function safeFetch(fetchImpl: typeof fetch, input: string, init: RequestInit, operation: string): Promise<Response> {
   try { return await fetchImpl(input, init); }
@@ -116,6 +122,7 @@ export async function getMessage(
   url.searchParams.set("format", format);
   if (format === "metadata") for (const h of ["From", "Subject", "Date"]) url.searchParams.append("metadataHeaders", h);
   const res = await safeFetch(fetchImpl, url.toString(), { headers: { authorization: `Bearer ${token}` } }, "Gmail messages.get");
+  if (res.status === 404) throw new GmailNotFoundError();
   gmailStatus(res, "Gmail messages.get");
   return (await safeJson(res, "Gmail messages.get")) as GmailApiMessage;
 }

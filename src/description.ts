@@ -26,7 +26,7 @@ export type TextProvenance = {
   normalizerVersion: string;
 };
 
-const NORMALIZER_VERSION = "plain-text-v2";
+const NORMALIZER_VERSION = "plain-text-v3";
 
 const ENTITIES: Record<string, string> = {
   amp: "&",
@@ -109,8 +109,69 @@ function truncate(text: string, limit: number): string {
   if (limit <= HEAD_CHARS) return `${cutForward(text.slice(0, limit - 1))}…`;
   const headBudget = Math.min(HEAD_CHARS, limit - ELISION.length - 1);
   const head = cutForward(text.slice(0, headBudget));
-  const tail = cutBackward(text.slice(text.length - (limit - headBudget - ELISION.length)));
-  return `${head}${ELISION}${tail}`;
+  const tailBudget = limit - headBudget - ELISION.length;
+  const tail = cutBackward(text.slice(text.length - tailBudget));
+  const plain = `${head}${ELISION}${tail}`;
+  // A long EEO or benefits block at the end can push the salary line out of
+  // the tail into the elided middle, which reads to screening as no pay
+  // disclosed. Pay lines found there are kept between two elisions. The tail
+  // gives up only the room they and the second elision take, and a line the
+  // shortened tail still holds is not repeated.
+  const minTail = tailBudget - ELISION.length - MAX_PAY_CHARS;
+  if (minTail <= 0) return plain;
+  // When any line after the head names pay or gives a range, other amounts
+  // (a budget, a stipend) are left out so they can't read as the salary.
+  const all = payCandidates(text, head.length, text.length);
+  const candidates = (all.some(c => c.rank < 2) ? all.filter(c => c.rank < 2) : all).filter(c => c.start < text.length - minTail);
+  if (!candidates.some(c => c.start < text.length - tail.length)) return plain;
+  let kept = selectPayLines(candidates);
+  for (;;) {
+    const middle = kept.map(c => c.excerpt).join("\n");
+    const shortTail = cutBackward(text.slice(text.length - (tailBudget - ELISION.length - middle.length)));
+    const tailStart = text.length - shortTail.length;
+    const outside = kept.filter(c => c.start < tailStart);
+    if (!outside.length) return plain;
+    if (outside.length === kept.length) return `${head}${ELISION}${middle}${ELISION}${shortTail}`;
+    kept = outside;
+  }
+}
+
+const MAX_PAY_CHARS = 600;
+// "$209,000", "£95,000", "€120k": a currency sign before an annual-scale amount.
+const PAY_AMOUNT = /[$£€]\s?\d{2,3}(?:,\d{3})+|[$£€]\s?\d{2,3}(?:\.\d+)?\s?[kK]\b/;
+const PAY_AMOUNTS = new RegExp(PAY_AMOUNT.source, "g");
+// Words that make an amount the role's pay rather than a budget, stipend or fund.
+const PAY_WORD = /\b(salary|salaries|compensation|base pay|pay range|pay band|pay|wage|hourly rate|OTE|on-target earnings)\b/i;
+
+type PayCandidate = { start: number; excerpt: string; rank: number };
+
+// Lines starting in [from, to) that carry an amount. Rank 0 names pay, rank 1
+// is a bare range (common under a "Salary" heading), rank 2 is any other amount.
+function payCandidates(text: string, from: number, to: number): PayCandidate[] {
+  const out: PayCandidate[] = [];
+  let start = 0;
+  for (const line of text.split("\n")) {
+    const at = line.search(PAY_AMOUNT);
+    if (start >= from && start < to && at >= 0) {
+      const excerpt = line.length <= 300 ? line : cutForward(cutBackward(line.slice(Math.max(0, at - 100), at + 200)));
+      const rank = PAY_WORD.test(line) ? 0 : (line.match(PAY_AMOUNTS)?.length ?? 0) >= 2 ? 1 : 2;
+      out.push({ start, excerpt, rank });
+    }
+    start += line.length + 1;
+  }
+  return out;
+}
+
+// The most pay-like lines first, within MAX_PAY_CHARS, returned in document order.
+function selectPayLines(candidates: PayCandidate[]): PayCandidate[] {
+  const kept: PayCandidate[] = [];
+  let used = 0;
+  for (const c of [...candidates].sort((a, b) => a.rank - b.rank || a.start - b.start)) {
+    if (used + c.excerpt.length + 1 > MAX_PAY_CHARS) continue;
+    kept.push(c);
+    used += c.excerpt.length + 1;
+  }
+  return kept.sort((a, b) => a.start - b.start);
 }
 
 // Both cuts land on whitespace so GLM never sees a severed word that reads

@@ -37,9 +37,12 @@ const tick = (at: string) => ({ cron: "*/5 * * * *", scheduledTime: Date.parse(a
 describe("scheduled Worker ownership and durable slots", () => {
   let db: D1Database, dispose: () => Promise<void>;
   let fixed: WorkflowQueue, discovery: WorkflowQueue, lifecycle: WorkflowQueue, radar: WorkflowQueue, intake: WorkflowQueue;
-  const env = (raw = instance(), queue = discovery) => ({ CANDIDATE_CONFIG: JSON.stringify(CHICAGO_OPERATIONS), INSTANCE_CONFIG: JSON.stringify(raw),
+  // Every scheduled module's secrets, as an operator adds them after deploy.
+  const SECRETS = { SLACK_BOT_TOKEN: "SYNTHETIC", SERPER_API_KEY: "SYNTHETIC", GMAIL_CLIENT_ID: "SYNTHETIC", GMAIL_CLIENT_SECRET: "SYNTHETIC",
+    GMAIL_REFRESH_TOKEN: "SYNTHETIC", TWITTERAPI_IO_KEY: "SYNTHETIC", ANTHROPIC_API_KEY: "SYNTHETIC" };
+  const env = (raw = instance(), queue = discovery, secrets: Record<string, string> = SECRETS) => ({ CANDIDATE_CONFIG: JSON.stringify(CHICAGO_OPERATIONS), INSTANCE_CONFIG: JSON.stringify(raw),
     DB: db, AGENT_WORKFLOW: queue, LIFECYCLE_WORKFLOW: lifecycle, RADAR_WORKFLOW: radar, MANUAL_INTAKE_WORKFLOW: intake,
-    LIFECYCLE_MODE: "live", DISCOVERY_ACCOUNTING_MODE: "off" }) as any;
+    LIFECYCLE_MODE: "live", DISCOVERY_ACCOUNTING_MODE: "off", ...secrets }) as any;
   beforeEach(async () => {
     ({ db, dispose } = await createDatabase()); await loadSchema(db, "root");
     fixed = new WorkflowQueue(); discovery = new WorkflowQueue(); lifecycle = new WorkflowQueue(); radar = new WorkflowQueue(); intake = new WorkflowQueue();
@@ -112,6 +115,24 @@ describe("scheduled Worker ownership and durable slots", () => {
     expect(await outcome).toBe("Calendar provider unavailable");
     expect(await db.prepare("SELECT dispatch_count FROM manual_intake_requests WHERE id=?").bind(id).first()).toEqual({ dispatch_count: 1 });
     expect(discovery.ids).toEqual(["example-instance-discovery-2026-11-01-0130"]);
+  });
+  it("skips scheduled work whose secrets are not added yet and starts it once they are", async () => {
+    const raw = instance(); raw.radar = { enabled: true, channelId: "CEXAMPLE123", monthlyBudgetUsd: 5, topics: ["Synthetic topic"] };
+    const warnings: unknown[] = []; const warn = vi.spyOn(console, "warn").mockImplementation((...args) => { warnings.push(args); });
+    const id = "c".repeat(64);
+    await acceptIntake(db, { id, teamId: "T1", userId: "U1", channelId: "C1", inputUrl: "https://jobs.lever.co/example/3", now: "2026-11-01T05:00:00Z" });
+    await fixedWorker.scheduled(tick("2026-11-01T05:30:00Z"), env(raw, fixed, {}));
+    await unboundedWorker.scheduled(tick("2026-11-01T05:30:00Z"), env(raw, discovery, { SLACK_BOT_TOKEN: "SYNTHETIC" }));
+    expect([fixed.ids, discovery.ids, lifecycle.ids, radar.ids]).toEqual([[], [], [], []]);
+    expect(intake.ids).toEqual([`intake-${id}-g0`]);
+    expect(JSON.stringify(warnings)).toContain("SERPER_API_KEY"); expect(JSON.stringify(warnings)).not.toContain("SYNTHETIC");
+    warn.mockRestore();
+    await fixedWorker.scheduled(tick("2026-11-01T06:30:00Z"), env(raw, fixed));
+    await unboundedWorker.scheduled(tick("2026-11-01T06:30:00Z"), env(raw));
+    expect(fixed.ids).toEqual(["example-instance-fixed-2026-11-01-0130"]);
+    expect(discovery.ids).toEqual(["example-instance-discovery-2026-11-01-0130"]);
+    expect(lifecycle.ids).toEqual(["example-instance-lifecycle-2026-11-01-0130"]);
+    expect(radar.ids).toEqual(["example-instance-radar-2026-11-01-0130"]);
   });
   it("stops shadow Workers before any ledger or provider operation", async () => {
     const raw = instance(); raw.shadowMode = true;

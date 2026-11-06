@@ -1,92 +1,155 @@
 # Guided setup on macOS
 
-This is the `0.1.0-beta.2` evaluation beta. Local verification is scoped to macOS arm64. Full native installation and live discovery, Slack, Gmail and resource cleanup remain unverified; setup still requires your own selected accounts, credentials and consent. Beta publication does not establish successful hosted installation.
+This guide is written for Claude Code or Codex to follow with you. Each step says what it does, what it needs from you and whether it touches an outside account. Setup stops cleanly at any step and resumes from where it stopped.
 
-Copy this prompt into Codex or Claude Code. The repository and prerelease below are the intended setup destination. Use this prompt only after verifying the published `v0.1.0-beta.2` tag, final publication readback receipt and downloaded asset checksum; this guide does not assert that publication has occurred.
+Paste this prompt into Claude Code or Codex, opened in a checkout of the release:
 
-> Set up Agent Job Pipeline from https://github.com/bentcarroll-cmyk/agent-job-pipeline at the reviewed v0.1.0-beta.2 prerelease. Read SETUP.md and AGENTS.md. Help me select a private career workspace outside the checkout, interview me from my resume, and review the exact readable criteria and machine configuration before recording my approval. Identify enabled services, account choices, schedules and costs before authorized external actions. Keep secrets out of chat and preserve resumable private receipts. Distinguish actual account checks from synthetic and offline checks. Prepare application materials only when I request them.
+> Set up Agent Job Pipeline from https://github.com/bentcarroll/agent-job-pipeline at the reviewed v0.1.0-beta.3 prerelease. Read SETUP.md and AGENTS.md, then walk me through it: interview me from my resume, show me my search criteria before I approve them, tell me which accounts, schedules and costs each step involves before using them, and keep my keys out of this chat.
+
+This is the `0.1.0-beta.3` beta. Automated tests, the offline setup stages and materials rendering pass on macOS with Apple silicon. A from-scratch install on a new Cloudflare account and Slack workspace is still an open release check.
+
+## Before you start
+
+- A Mac with Apple silicon, with Node 22 and Python 3.12. If they are missing: `brew install node@22 python@3.12`. Linux and Windows are untested.
+- Arial, which macOS includes. Setup's document check stops without it.
+- Accounts: Cloudflare on the Workers Paid plan, a Slack workspace where you can add an app, and a Serper API key. Gmail tracking and the AI radar are optional. See [accounts](docs/accounts.md) for what each one is used for and what it costs.
+- Keys never go in the chat. You enter them in Cloudflare's dashboard, in your own terminal or in the provider's own sign-in page when a step asks.
+
+All `/absolute/private/workspace` and `/absolute/python3.12` paths below are placeholders. Resolve them to the real selected paths; do not use another person's defaults. The workspace must be outside the release checkout and protected source directories, including after symlink resolution.
 
 ## Assistant access
 
-Both assistants follow this guide and the same canonical skills. In Codex, open the release checkout and ensure the selected external workspace is writable; a CLI session may use `--add-dir /absolute/private/workspace`. Inspect installed `codex exec --help` before noninteractive work. `exec` defaults to read-only; explicit `--sandbox workspace-write` is needed for file edits, and `--json` / `--output-last-message` can capture receipts. Do not bypass approvals or read saved authentication files. See official [project instructions](https://learn.chatgpt.com/docs/agent-configuration/agents-md) and [noninteractive execution](https://learn.chatgpt.com/docs/non-interactive-mode).
+Both assistants follow this guide and the same skills. In Codex, open the release checkout and make sure the selected workspace is writable; a CLI session may use `--add-dir /absolute/private/workspace`. `codex exec` defaults to read-only, so file edits need `--sandbox workspace-write`. Do not bypass approvals or read saved authentication files. See [project instructions](https://learn.chatgpt.com/docs/agent-configuration/agents-md) and [noninteractive execution](https://learn.chatgpt.com/docs/non-interactive-mode).
 
-In Claude Code, start in the release checkout, confirm that CLAUDE.md imports AGENTS.md, and inspect installed `claude --help`. Grant the selected workspace through the session's directory access (`--add-dir /absolute/private/workspace` where supported). The repository `.claude/skills` adapter delegates material requests; it disables model-initiated invocation. `--print` is a documented noninteractive mode, not proof that local files, browser or PDF images are accessible. See official [skills](https://code.claude.com/docs/en/skills) and [headless execution](https://code.claude.com/docs/en/headless).
+In Claude Code, start in the release checkout, confirm that CLAUDE.md imports AGENTS.md, and grant the selected workspace through the session's directory access (`--add-dir /absolute/private/workspace` where supported). The `.claude/skills` adapter routes material requests to the shared procedure. See [skills](https://code.claude.com/docs/en/skills) and [headless execution](https://code.claude.com/docs/en/headless).
 
-For either assistant, establish actual shell/file tools, macOS browser consent, Python/PDF tools, and the ability to inspect rendered images. Browser automation is not guaranteed by either guide. Human login and consent can happen manually. Never call an instruction-only or fake-adapter walkthrough a real installation. Live assistant/account acceptance is a separate release check.
+For either assistant, confirm the session really has shell and file tools, Python and PDF tools, and can look at rendered images before relying on them. Sign-ins and consent screens are done by the person. Never present an instruction-only or offline walkthrough as a real installation.
 
-## 1. Select workspace and approve the profile
+## 1. Choose a workspace and approve your profile
 
-All `/absolute/private/workspace` and `/absolute/python3.12` paths below are placeholders. Resolve them to the selected real paths; do not use another person's defaults. The workspace must be outside the release checkout and protected source directories, including after symlink resolution.
+Read [onboarding](skills/onboard/SKILL.md). Copy the selected resume byte for byte into the private workspace, interview the candidate, and reconcile direct corrections into the reviewed factual digest and writing preferences. Keep unresolved evidence gaps explicit. Create private `materials.json` using that skill's schema, including the resume page count and whether letters are wanted.
 
-Read [onboarding](skills/onboard/SKILL.md). Copy the selected resume byte for byte into the private workspace, interview the candidate, and reconcile direct corrections into the reviewed factual Markdown/JSON digest and writing preferences. Keep unresolved evidence gaps explicit. Create private `materials.json` using that skill's schema; choose resume page count and whether letters are wanted.
+Prepare private `criteria.md` and `candidate.json` using the [candidate schema](schemas/candidate.schema.json). Review, in plain language: eligibility, employment type, clearance, comparable annual base pay and currency, commute and remote arrangements, function lanes, search phrases and employer boards. Remote alone does not prove eligibility, and pay that cannot be compared goes to review. After the candidate approves the actual readable file and machine configuration, record the SHA-256 of the readable file, `candidatePolicyHash(policy)` and `candidateCriteriaVersion(candidate)` as `readableSha256`, `policySha256` and `configSha256`, plus the real approval time. These functions live in [candidate configuration](src/config/candidate.ts). Setup verifies approvals; it never creates them. Any change to search phrases or policy needs a fresh review.
 
-Prepare private `criteria.md` and `candidate.json` using [candidate schema](schemas/candidate.schema.json). Review readable eligibility, employment type, clearance, comparable annual base pay/currency, commute/remote arrangements, function lanes, search banks and employer sources. Remote alone does not prove eligibility; incomparable pay requires review. After the candidate approves the actual readable bytes and machine configuration, record SHA-256 of the readable file, `candidatePolicyHash(policy)` and `candidateCriteriaVersion(candidate)` as `readableSha256`, `policySha256` and `configSha256`, plus the real approval time. Functions live in [candidate configuration](src/config/candidate.ts). Setup verifies approvals; it does not manufacture them. Any changed search bank or policy requires fresh review.
+Create private `instance.json` from the synthetic [draft](examples/instance.draft.json), guided by the [instance schema](schemas/instance.schema.json). Set your own Cloudflare account ID (shown on the dashboard's account home), operator contact, Slack channel and user IDs, flags and schedule. In Slack, a channel's ID is at the bottom of its details panel, and your user ID is under your profile's "Copy member ID". Leave Gmail tracking off (`lifecycle.enabled: false`) for the first install; step 7 turns it on. The database ID stays null until step 3. The examples are fabricated, not working accounts.
 
-Create private `instance.json` from the synthetic [draft](examples/instance.draft.json), guided by [instance schema](schemas/instance.schema.json). Set your own account, operator contact, Slack channel/user, flags and schedule. The database ID stays null until provisioning. The examples are fabricated, not working accounts, approved criteria or resource ownership receipts.
+## 2. Check this Mac
 
-## 2. Check local capabilities
-
-Use Node 22 and an explicitly selected Python 3.12 executable. Create the selected external workspace directory first with private permissions. From the release checkout, bootstrap locked dependencies using core Node only; no checkout `node_modules` or global installation is needed:
+Create the workspace directory with private permissions. From the release checkout, install the locked dependencies into the workspace using core Node only (nothing is installed globally or in the checkout):
 
 ```sh
 node tools/setup/bootstrap.mjs --workspace /absolute/private/workspace
 ```
 
-Bootstrap preserves HOME, uses private npm configuration/cache, refuses escaped/special setup paths, and shares the workspace lock. It returns the exact private loader path. Replace the loader placeholder in each command below with that returned absolute path. The check installs/verifies private dependencies and a copied-executable Python environment under `.setup`, then tests real macOS Arial embedding, text extraction and rasterization. See [dependency isolation and prerequisites](docs/setup.md).
+Bootstrap prints the private loader path that every command below uses. Then check this Mac and read the setup status:
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts check --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json --python /absolute/python3.12
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts status --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json
 ```
 
-Keep HOME, CODEX_HOME and global configuration unchanged. Missing Arial currently blocks setup preflight. For requested materials after preflight, macOS Arial is the default; an explicitly selected installed Liberation Sans directory and `--font-family "Liberation Sans"` are supported with pinned regular/bold/font-license hashes. This is not an automatic setup fallback. No fonts are vendored; see the [canonical PDF checks and installed font option](skills/prepare-application/SKILL.md). Other platforms remain unvalidated.
+`check` installs a private Python environment, then embeds macOS Arial in a test PDF, extracts its text and renders it. HOME, CODEX_HOME and global settings stay unchanged. For materials, an installed Liberation Sans can replace Arial explicitly; see the [materials procedure](skills/prepare-application/SKILL.md). See [dependency isolation](docs/setup.md) for details.
 
-## 3. Authorize selected accounts and provision
+## 3. Create the Cloudflare resources
 
-Read [accounts](docs/accounts.md). Confirm exact account/channel/user and intended service usage. The operator supplies `CLOUDFLARE_API_TOKEN` privately for the selected account; never paste or interpolate it into chat/command arguments. When authorized:
+This step writes to the selected Cloudflare account. Confirm the account and get the person's go-ahead first.
+
+Create an API token in the Cloudflare dashboard (My Profile, API Tokens): start from the "Edit Cloudflare Workers" template and add the account permissions D1 Edit and AI Gateway Edit, limited to the selected account. The person makes the token available to the assistant without showing it: in the terminal that will start Claude Code or Codex, run `read -s CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN`, paste the token, press Return, then start the assistant from that terminal. Never paste the token into the chat or a command argument. Then:
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts resources --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json --provider-writes approved
 ```
 
-The CLI records random resource names/intents before writes, checks account-scoped opaque IDs and database ownership, and initializes the complete schema with migration receipts. It updates the selected instance file with actual IDs. It creates Worker metadata, not deployed code. Resume using the same workspace; do not delete uncertain intents or adopt resources by matching names. Slack app installation, callback settings and credential storage remain separate guided account steps. Require a fresh app and an unused `/job` namespace; use another Slack workspace when an active app owns `/job`. Never repoint an existing app or its commands.
+This creates the D1 database, AI Gateway and the two Workers (empty, no code yet) under random names, initializes the schema and writes the real IDs into `instance.json`. If it stops, rerun it with the same workspace; it reconciles from its saved record and never adopts resources by name. See [recovery](docs/recovery.md).
 
-## 4. Preview and authorize Gmail if enabled
+## 4. Preview offline
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts preview --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json
 ```
 
-This validates approval/bindings and performs both offline Worker builds. `.setup/preview.json` records `livePreview:false`; preview/shadow configs have empty schedules and disabled operational entries. Review screening examples and unknown/review outcomes separately. Neither build proves real source discovery, model access, Slack delivery, Gmail consent or account quota.
+This checks the approvals and bindings and builds both Workers offline. It does not run discovery, call the model or post to Slack. Run it after `resources`; before that it stops with `RESOURCES_REQUIRED`.
 
-When lifecycle is selected, review generated `/` and `/privacy` pages for the configured operator after their authorized hosting, configure your Google project/installed OAuth client and actual mode, then follow [Gmail setup](docs/lifecycle-setup.md). Human consent must name the selected Gmail account and read-only processing, including classification through Workers AI without Gateway logging/caching. With explicit authorization and selected account credentials:
+## 5. Review the schedule and activate
 
-```sh
-node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/gmail-auth/auth.mjs --instance /absolute/private/workspace/instance.json --client /absolute/private/workspace/oauth-client.json --workspace /absolute/private/workspace
-```
+Show the person the timezone, local run times (five-minute steps), discovery weekdays, whether Gmail tracking and the radar are on, the Slack channels, the radar's monthly data budget and the services each feature uses. The radar is off by default. When it is on, choose its topics from `enterprise_adoption`, `agents_in_operations`, `operating_models`, `governance_policy`, `frontier_releases`, `ai_economics`, `data_analysis`, `hands_on`; the budget covers X data only. Changing any of these choices means rerunning `preview`.
 
-The helper routes the three Gmail secrets directly to the instance's unbounded Worker through stdin; show only redacted success/failure. No browser grant or upload is implied by an offline test. Testing tokens normally need reauthorization after seven days; the local `oauthMode` flag does not publish or verify a Google app.
-
-## 5. Review schedule and activation
-
-Show timezone, five-minute local times, ISO discovery weekdays, lifecycle/radar enablement, channel destinations, data budget and service usage. Radar is off by default, requires neither X nor Anthropic credentials while disabled, and prepares private digest drafts only. When enabled, choose supported IDs: `enterprise_adoption`, `agents_in_operations`, `operating_models`, `governance_policy`, `frontier_releases`, `ai_economics`, `data_analysis`, `hands_on`. Hiring queries come from approved function phrases. Set an explicit channel, positive monthly data budget and daily radar time. The budget meters estimated X data costs; it is not a total-service billing cap. Changing instance choices invalidates preview/review fingerprints.
-
-Only after approval of these exact choices and verified resources:
+After the person approves these exact choices:
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts activate --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json --provider-writes approved
 ```
 
-The first invocation intentionally stops with `ACTIVATION_REVIEW_REQUIRED` and writes `.setup/activation-review.json`. Externally suspend scheduled/manual delivery, drain running Workflows and reconcile uncertain Slack requests; record truthful `externalQuiesced`, `receiptsReconciled`, evidence and current `reviewedAt`. Do not assert live checks or external suspension from an offline test. Review the current active revision and exact hashes/resource IDs, then:
+The first run stops on purpose with `ACTIVATION_REVIEW_REQUIRED` and writes `.setup/activation-review.json`. On a first install nothing is deployed yet, so there is nothing to pause or drain: set `externalQuiesced` and `receiptsReconciled` to true, write evidence such as "First install: no Worker code deployed and no deliveries exist", and set `reviewedAt` to the current time. The review is accepted for one hour after `reviewedAt`. When upgrading a running instance, pause scheduled and manual delivery, let running Workflows finish and reconcile uncertain Slack requests first, and record what was actually done. Then:
 
 ```sh
 node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts activate --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json --provider-writes approved --review /absolute/private/workspace/.setup/activation-review.json
 ```
 
-Activation independently checks active criteria and performs reviewed D1 compare-and-swap. It emits `.setup/generated/wrangler.fixed.operational.toml` and `wrangler.unbounded.operational.toml`, with one UTC five-minute dispatcher per Worker for the approved local calendar. It does not deploy either Worker. Spring-forward skipped local slots are skipped; repeated fall-back slots deduplicate by local slot, while intake recovery runs on every UTC tick. Live deployment, callback registration, cron capacity, provider costs and controlled acceptance need separately authorized execution. Keep real deployment and live acceptance receipts separate from activation and offline checks.
+Activation records the approved criteria in D1 and writes the two operational Worker configs, each with one five-minute dispatcher that runs your local schedule. It does not deploy them.
 
-## 6. Resume and operate
+## 6. Deploy and connect Slack
 
-Use `status` to inspect receipts, then rerun the blocked stage against the same selected files and resources. Read [recovery](docs/recovery.md) for uncertain provider writes, locks, Gmail failures and changed approvals; use [upgrades](docs/upgrades.md) when changing a reviewed release.
+This step deploys code to the selected Cloudflare account and starts the schedule. Get the person's go-ahead first.
 
-D1 is authoritative for jobs and application state. Slack review and manual intake do not prepare materials automatically. On a request such as “prepare materials for this exact job ID using my selected materials.json”, Codex's `.agents/skills/job-materials` or Claude's `.claude/skills/job-materials` delegates to [prepare-application](skills/prepare-application/SKILL.md). Review real PDF pages before `materials_ready`. Packages and readiness do not imply application submission, uploaded versions or receipt-confirmed status. Setup sends no employer messages.
+```sh
+node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/setup/cli.ts deploy --workspace /absolute/private/workspace --instance /absolute/private/workspace/instance.json --provider-writes approved
+```
+
+It deploys the fixed Worker (its name ends in `-fixed`), then the unbounded one (its name ends in `-open`), and prints the unbounded Worker's address, `https://<worker name>.<your subdomain>.workers.dev`. If it stops with `WORKERS_DEV_SUBDOMAIN_REQUIRED`, open Workers & Pages in the Cloudflare dashboard once, accept a workers.dev subdomain and rerun. If it stops with `ACTIVATION_STALE`, the configs, instance or release files changed after activation; rerun `preview` and both `activate` steps first. Until the secrets below are added, scheduled runs are skipped and the Worker logs which secret is missing, so nothing fails while you finish this step.
+
+Create the Slack app. Check the workspace's installed apps first: if another app already owns `/job`, use a different Slack workspace, and never repoint an existing app. At api.slack.com/apps choose Create New App, From a manifest, pick the workspace and paste this, with the printed address in both URLs:
+
+```yaml
+display_information:
+  name: Job Pipeline
+features:
+  bot_user:
+    display_name: Job Pipeline
+  slash_commands:
+    - command: /job
+      url: https://<unbounded worker address>/slack/commands
+      description: Screen a job posting by link
+      usage_hint: <posting link>
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - commands
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://<unbounded worker address>/slack/actions
+```
+
+Install the app to the workspace, then invite it to the channel set in `instance.json` (`/invite @Job Pipeline`), and to the radar channel too if the radar is on.
+
+Add the secrets in the Cloudflare dashboard (Workers & Pages, the Worker, Settings, Variables and Secrets, Add, type Secret). The person copies each value straight from its source:
+
+| Secret | Fixed Worker (`-fixed`) | Unbounded Worker (`-open`) | Where it comes from |
+| --- | --- | --- | --- |
+| `SLACK_BOT_TOKEN` | yes | yes | Slack app, OAuth & Permissions, Bot User OAuth Token |
+| `SLACK_SIGNING_SECRET` | | yes | Slack app, Basic Information, Signing Secret |
+| `TRIGGER_SECRET` | yes | yes | any long random string, for example from `openssl rand -hex 32` in the person's own terminal |
+| `SERPER_API_KEY` | | yes | serper.dev dashboard |
+| `TWITTERAPI_IO_KEY`, `ANTHROPIC_API_KEY` | | radar only | twitterapi.io and the Anthropic Console |
+
+Test it: in the channel, type `/job` followed by a real posting link. The app answers with its screening result. Scheduled discovery starts at the next discovery time.
+
+## 7. Add Gmail tracking (optional)
+
+Gmail tracking needs the deployed Worker, which serves the `/` and `/privacy` pages Google's consent screen points to. Review those pages at the unbounded Worker's address, set up your Google project and Desktop OAuth client, then follow [Gmail setup](docs/lifecycle-setup.md). Consent must name the selected Gmail account and read-only processing, with classification through Workers AI and no Gateway logging or caching.
+
+First authorize, so the credentials are in place before tracking starts. With the person's go-ahead and the Cloudflare token exported as in step 3:
+
+```sh
+node --import /absolute/private/workspace/.setup/dependencies/node_modules/tsx/dist/loader.mjs tools/gmail-auth/auth.mjs --instance /absolute/private/workspace/instance.json --client /absolute/private/workspace/oauth-client.json --workspace /absolute/private/workspace
+```
+
+The helper opens Google's consent page, then writes the three Gmail secrets straight to the unbounded Worker and shows only success or failure. Then turn tracking on in `instance.json`: set `lifecycle.enabled` to true, `lifecycle.since` to the earliest date whose mail should count, `lifecycle.oauthMode` to the Google mode you actually use, and `schedule.lifecycleLocalTime` to a daily time. Show the person the change, then rerun `preview`, both `activate` steps and `deploy`. In Google's Testing mode, sign-in normally expires after seven days.
+
+## 8. Resume and operate
+
+Run `status` to see where setup stands, then rerun the stage that stopped, with the same workspace and instance. [Recovery](docs/recovery.md) covers interrupted provider writes, locks, Gmail failures and changed approvals; [upgrades](docs/upgrades.md) covers moving to a newer release.
+
+D1 holds the jobs and application status. Slack review and `/job` do not prepare materials on their own. Ask for them by job ID, for example "prepare materials for this job ID using my materials.json"; Codex's `.agents/skills/job-materials` and Claude's `.claude/skills/job-materials` both hand off to the [materials procedure](skills/prepare-application/SKILL.md). Review the real PDF pages before marking a package `materials_ready`. A prepared package is not a submitted application, and setup never contacts employers.

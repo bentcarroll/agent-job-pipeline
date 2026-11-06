@@ -40,6 +40,7 @@ import { prepareLocationNotifications, isLocationNotificationReady, locationHold
 import { startDiscoveryRun, recordStageOutcome, recordStageOutcomes, recordCreatedDeliveryIntent, recordDeliveryAttempt, finishDiscoveryRun, type Stage } from "./discovery/coverage";
 import { observeFixedSource, observeFixedAggregate } from "./discovery/observe";
 import { reconcileIncompleteRuns } from "./operations/run-health";
+import { secretsReady } from "./config/secrets";
 import { readDiscoveryReport } from "./operations/discovery-report";
 import { persistFixedCandidate, loadClaimedFixedCandidates, settleFixedAliasCandidate, holdFixedOwnerConflict } from "./discovery/fixed-candidates";
 import { selectCandidateBatch, settleCandidate, settleOutstandingCandidates } from "./discovery/candidates";
@@ -617,7 +618,7 @@ export default {
     env = configured;
     if (configured.instance.shadowMode) return;
     const slot = dueWorkflows(new Date(event.scheduledTime), configured.instance.schedule).find(s => s.workflow === "fixed");
-    if (!slot) return;
+    if (!slot || !secretsReady(env, "fixed")) return;
     if (env.DISCOVERY_ACCOUNTING_MODE === "on") {
       try { await reconcileIncompleteRuns(env.DB, "fixed_boards", env.AGENT_WORKFLOW); }
       catch (error) { console.error("Discovery health reconciliation failed", error); }
